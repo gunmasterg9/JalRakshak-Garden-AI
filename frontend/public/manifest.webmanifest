@@ -1,0 +1,10 @@
+{
+  "name": "JalRakshak Garden AI",
+  "short_name": "JalRakshak",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f6ef",
+  "theme_color": "#153d2d",
+  "description": "A private, water-smart garden companion powered by local AI.",
+  "icons": []
+}
