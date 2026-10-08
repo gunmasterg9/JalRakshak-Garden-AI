@@ -9,9 +9,10 @@ from config import DB_PATH
 
 
 def _get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
@@ -217,10 +218,62 @@ def init_db() -> None:
             FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS zones (
+            zone_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            device_id TEXT,
+            valve_channel INTEGER DEFAULT 1,
+            target_budget_weekly_liters REAL DEFAULT 50.0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS garden_memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            plant_id TEXT,
+            zone_id TEXT,
+            event_type TEXT NOT NULL,
+            source TEXT NOT NULL,
+            data_json TEXT DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS water_budgets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_type TEXT NOT NULL DEFAULT 'weekly',
+            target_liters REAL NOT NULL DEFAULT 80.0,
+            warning_threshold_percent REAL DEFAULT 80.0,
+            is_active INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS user_decision_outcomes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proposal_id TEXT NOT NULL,
+            decision TEXT NOT NULL,
+            plant_name TEXT,
+            zone_id TEXT,
+            device_id TEXT,
+            initial_moisture REAL,
+            recommended_runtime INTEGER,
+            decision_timestamp TEXT NOT NULL,
+            outcome_status TEXT DEFAULT 'pending',
+            evaluated_at TEXT,
+            moisture_after_12h REAL,
+            feedback_insight TEXT DEFAULT ''
+        );
+
         CREATE INDEX IF NOT EXISTS idx_sensor_readings_device_time ON sensor_readings(device_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_soil_readings_time ON soil_readings(device_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_pump_events_time ON pump_events(device_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts(is_active);
+        CREATE INDEX IF NOT EXISTS idx_garden_memory_time ON garden_memory(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_garden_memory_type ON garden_memory(event_type);
+        CREATE INDEX IF NOT EXISTS idx_garden_memory_zone ON garden_memory(zone_id);
+        CREATE INDEX IF NOT EXISTS idx_decision_time ON user_decision_outcomes(decision_timestamp);
         """)
 
         # Seed missions if empty
@@ -271,29 +324,45 @@ def seed_defaults() -> None:
                 (key, value),
             )
 
-        # Seed default ESP32 controller
-        conn.execute(
-            """INSERT OR IGNORE INTO devices
-            (device_id, name, device_type, ip_address, status, mode, pump_state, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                "esp32-garden-01",
-                "Terrace ESP32 Controller",
-                "esp32",
-                "192.168.1.150",
-                "offline",
-                "AI_RECOMMEND",
-                0,
-                now_iso,
-                now_iso,
-            ),
-        )
+        # Seed default ESP32 controllers (Multi-Zone Microclimate nodes)
+        devices_to_seed = [
+            ("esp32-garden-01", "Terrace East (Veggies)", "esp32", "192.168.1.150"),
+            ("esp32-garden-02", "Terrace West (Herbs & Tulsi)", "esp32", "192.168.1.151"),
+            ("esp32-garden-03", "Shade Area (Ornamentals)", "esp32", "192.168.1.152"),
+        ]
+        for dev_id, dev_name, dev_type, ip_addr in devices_to_seed:
+            conn.execute(
+                """INSERT OR IGNORE INTO devices
+                (device_id, name, device_type, ip_address, status, mode, pump_state, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (dev_id, dev_name, dev_type, ip_addr, "offline", "AI_RECOMMEND", 0, now_iso, now_iso),
+            )
+            conn.execute(
+                """INSERT OR IGNORE INTO device_calibrations
+                (device_id, dry_value, wet_value, status, updated_at)
+                VALUES (?, ?, ?, ?, ?)""",
+                (dev_id, 3200, 1400, "calibrated", now_iso),
+            )
 
-        # Seed default calibration record
+        # Seed default multi-zones
+        zones_to_seed = [
+            ("zone-1", "Terrace East (Vegetables)", "Intense morning sun, high evaporation. Houses Tomatoes & Chillies.", "esp32-garden-01", 1, 45.0),
+            ("zone-2", "Terrace West (Herbs & Sacred)", "Afternoon sun exposure. Houses Tulsi, Mint, Curry Leaf.", "esp32-garden-02", 2, 25.0),
+            ("zone-3", "Shade Canopy (Ornamentals)", "Diffused sunlight. Houses Mogra, Aloe Vera, Ferns.", "esp32-garden-03", 3, 20.0),
+        ]
+        for z_id, z_name, z_desc, z_dev, z_valve, z_budget in zones_to_seed:
+            conn.execute(
+                """INSERT OR IGNORE INTO zones
+                (zone_id, name, description, device_id, valve_channel, target_budget_weekly_liters, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (z_id, z_name, z_desc, z_dev, z_valve, z_budget, now_iso),
+            )
+
+        # Seed default weekly water budget (80 Liters)
         conn.execute(
-            """INSERT OR IGNORE INTO device_calibrations
-            (device_id, dry_value, wet_value, status, updated_at)
-            VALUES (?, ?, ?, ?, ?)""",
-            ("esp32-garden-01", 3200, 1400, "calibrated", now_iso),
+            """INSERT OR IGNORE INTO water_budgets
+            (id, period_type, target_liters, warning_threshold_percent, is_active, created_at, updated_at)
+            VALUES (1, 'weekly', 80.0, 80.0, 1, ?, ?)""",
+            (now_iso, now_iso),
         )
 

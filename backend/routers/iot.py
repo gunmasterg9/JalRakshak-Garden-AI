@@ -11,8 +11,12 @@ from pydantic import BaseModel, Field
 
 import config
 from database import get_db
+import decision_learner
+import digital_twin
+import garden_memory
 import iot_learning
 import iot_safety
+import microclimate
 import ollama_service
 from plant_knowledge import list_all_supported_plants, lookup_plant_knowledge
 import rules_engine
@@ -68,6 +72,21 @@ class ChatQueryPayload(BaseModel):
     device_id: Optional[str] = "esp32-garden-01"
     plant_name: Optional[str] = "Tomato"
     language: Optional[str] = "en"
+
+
+class GardenMemoryPayload(BaseModel):
+    event_type: str = Field(..., description="watering, plant_observation, sensor_anomaly, user_approval, etc.")
+    source: str = Field("USER", description="SENSOR, USER, AI, SYSTEM, WEATHER")
+    plant_id: Optional[str] = None
+    zone_id: Optional[str] = None
+    data: Optional[dict[str, Any]] = None
+
+
+class WaterBudgetPayload(BaseModel):
+    target_liters: float = Field(..., ge=1.0, le=1000.0)
+    period_type: str = "weekly"
+    warning_threshold_percent: float = 80.0
+
 
 
 def _validate_iso_timestamp(ts: str) -> bool:
@@ -162,6 +181,7 @@ async def ingest_telemetry(payload: TelemetryPayload):
         )
 
         # Check water tank critical safety threshold
+        should_stop_pump = False
         if payload.water_level_percent <= config.MIN_WATER_LEVEL_PERCENT:
             conn.execute(
                 """INSERT INTO alerts (device_id, severity, alert_type, message, is_active, created_at)
@@ -172,13 +192,14 @@ async def ingest_telemetry(payload: TelemetryPayload):
                     payload.timestamp,
                 ),
             )
-            # Fail-safe: if pump was on, force stop immediately
+            tank_data = json.dumps({"alert": "tank_critical", "water_level_percent": payload.water_level_percent})
+            conn.execute(
+                """INSERT INTO garden_memory (timestamp, plant_id, zone_id, event_type, source, data_json, created_at)
+                VALUES (?, NULL, 'zone-1', 'sensor_anomaly', 'SENSOR', ?, ?)""",
+                (payload.timestamp, tank_data, payload.timestamp),
+            )
             if payload.pump_on:
-                iot_safety.record_pump_stop(
-                    device_id,
-                    action="auto_timeout",
-                    reason="Low water reservoir cutoff",
-                )
+                should_stop_pump = True
 
         # Check soil critical dryness
         if payload.soil_moisture_percent <= 20.0:
@@ -192,6 +213,20 @@ async def ingest_telemetry(payload: TelemetryPayload):
                     payload.timestamp,
                 ),
             )
+            soil_data = json.dumps({"alert": "soil_critical", "soil_moisture_percent": payload.soil_moisture_percent})
+            conn.execute(
+                """INSERT INTO garden_memory (timestamp, plant_id, zone_id, event_type, source, data_json, created_at)
+                VALUES (?, ?, 'zone-1', 'plant_stress', 'SENSOR', ?, ?)""",
+                (payload.timestamp, str(payload.plant_id or "Tomato"), soil_data, payload.timestamp),
+            )
+
+    # Fail-safe pump stop outside of transaction
+    if should_stop_pump:
+        iot_safety.record_pump_stop(
+            device_id,
+            action="auto_timeout",
+            reason="Low water reservoir cutoff",
+        )
 
     pump_status = iot_safety.get_pump_status(device_id)
 
@@ -624,6 +659,12 @@ async def get_iot_recommendation(
     forecast = await get_weather_forecast()
     rain_guard_active = forecast.get("rain_guard", {}).get("active", False)
 
+    # Adaptive duration & predictive analytics
+    adaptive = iot_learning.calculate_adaptive_watering_duration(device_id, plant_name, soil_pct)
+    predictive = iot_learning.predict_soil_critical_time(device_id, plant_name)
+    memory_context = garden_memory.get_memory_context_for_ai(plant_name=plant_name, hours=72)
+    learned_feedback = decision_learner.get_learned_decision_insights(plant_name=plant_name)
+
     # Deterministic rule evaluation
     decision = rules_engine.evaluate_iot_watering_decision(
         plant_name=plant_name,
@@ -638,13 +679,16 @@ async def get_iot_recommendation(
     decision["is_simulated"] = is_simulated
     decision["device_id"] = device_id
     decision["rain_guard"] = forecast.get("rain_guard", {})
+    decision["adaptive_duration"] = adaptive
+    decision["predictive_watering"] = predictive
 
     # If Ollama is requested and available, enhance with AI reasoning
     if use_ai:
         try:
             ollama_status = await ollama_service.check_connection()
             if ollama_status.get("ollama_available") and ollama_status.get("model_installed"):
-                prompt = f"""You are the JalRakshak Garden AI engine. Reason about real sensor telemetry for:
+                feedback_str = "\n".join(f"- {f}" for f in learned_feedback[:2]) if learned_feedback else "None yet."
+                prompt = f"""You are the JalRakshak Garden AI engine. Reason about real sensor telemetry and garden memory for:
 Plant: {plant_name}
 Current Telemetry:
 - Soil Moisture: {soil_pct:.1f}%
@@ -652,14 +696,21 @@ Current Telemetry:
 - Relative Humidity: {hum_pct:.1f}%
 - Water Tank Level: {water_pct:.1f}%
 - Last Watering: {f'{int(hours_since_water)} hours ago' if hours_since_water else 'Unknown'}
+- Recommended Adaptive Runtime: {adaptive['recommended_duration_seconds']}s ({adaptive['estimated_liters_delivered']}L)
+- Predicted Critical Time: {predictive.get('predicted_critical_time', 'Unknown')} ({predictive.get('recommended_watering_window', 'N/A')})
 
-Recent 6-hour soil history samples: {len(history_list)} readings.
+Garden Memory Context (Last 72h):
+{memory_context}
+
+Learned Human Feedback:
+{feedback_str}
+
 Deterministic Safety Recommendation: {decision['recommendation']}
 Explain why and give exact practical garden advice. Format in 2 concise sentences."""
                 ai_text = await ollama_service.generate(prompt)
                 if ai_text:
                     decision["ai_explanation"] = ai_text.strip()
-                    decision["source"] = "sensor_rules + ollama_ai"
+                    decision["source"] = "sensor_rules + garden_memory + ollama_ai"
         except Exception as e:
             logger.debug("Ollama enhancement skipped: %s", e)
 
@@ -983,6 +1034,17 @@ async def action_proposal(proposal_id: str, approve: bool = True):
 
     _pending_proposals = [p for p in _pending_proposals if p["id"] != proposal_id]
 
+    # Record user decision for longitudinal learning
+    decision_learner.record_user_decision(
+        proposal_id=proposal_id,
+        decision="approved" if approve else "dismissed",
+        plant_name=found.get("plant_name", "Tomato"),
+        zone_id=found.get("zone_id", "zone-1"),
+        device_id=found.get("device_id", "esp32-garden-01"),
+        initial_moisture=found.get("current_soil_moisture", 26.5),
+        recommended_runtime=found.get("duration_seconds", 25),
+    )
+
     if approve:
         # Trigger pump safely
         return await issue_device_command(
@@ -994,4 +1056,180 @@ async def action_proposal(proposal_id: str, approve: bool = True):
             ),
         )
     return {"status": "dismissed", "proposal_id": proposal_id}
+
+
+# ---------------------------------------------------------------------------
+# Section 2 & 3: Garden Digital Twin Subsystem
+# ---------------------------------------------------------------------------
+@router.get("/digital-twins")
+async def get_all_digital_twins():
+    """Retrieve real-time digital twins for all garden plants with stress indices."""
+    return digital_twin.compute_all_digital_twins()
+
+
+@router.get("/digital-twins/{plant_id}")
+async def get_single_digital_twin(plant_id: str, device_id: str = "esp32-garden-01"):
+    """Retrieve digital twin replica for a specific plant pot."""
+    return digital_twin.compute_plant_digital_twin(plant_id, device_id=device_id)
+
+
+# ---------------------------------------------------------------------------
+# Section 12 & 13: Multi-Zone Management
+# ---------------------------------------------------------------------------
+@router.get("/zones")
+async def list_garden_zones():
+    """Retrieve all physical garden zones with connected device nodes and valve channels."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT zone_id, name, description, device_id, valve_channel, target_budget_weekly_liters FROM zones ORDER BY zone_id ASC").fetchall()
+    return [
+        {
+            "zone_id": r["zone_id"],
+            "name": r["name"],
+            "description": r["description"],
+            "device_id": r["device_id"],
+            "valve_channel": r["valve_channel"],
+            "target_budget_weekly_liters": r["target_budget_weekly_liters"],
+        }
+        for r in rows
+    ]
+
+
+@router.get("/zones/{zone_id}")
+async def get_zone_digital_twin(zone_id: str):
+    """Retrieve aggregate digital twin metrics for an entire garden zone."""
+    return digital_twin.compute_zone_digital_twin(zone_id)
+
+
+# ---------------------------------------------------------------------------
+# Section 4: Persistent Garden Memory Subsystem
+# ---------------------------------------------------------------------------
+@router.get("/memory")
+async def get_garden_memory(
+    plant_id: Optional[str] = None,
+    zone_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    source: Optional[str] = None,
+    hours: Optional[int] = 72,
+    limit: int = 50,
+):
+    """Query persistent historical garden events (SENSOR, USER, AI, SYSTEM, WEATHER)."""
+    return garden_memory.query_memory_events(
+        plant_id=plant_id,
+        zone_id=zone_id,
+        event_type=event_type,
+        source=source,
+        hours=hours,
+        limit=limit,
+    )
+
+
+@router.post("/memory", status_code=status.HTTP_201_CREATED)
+async def post_garden_memory_event(payload: GardenMemoryPayload):
+    """Record an observation, pruning, or experiment event into Garden Memory."""
+    event_id = garden_memory.record_memory_event(
+        event_type=payload.event_type,
+        source=payload.source,
+        plant_id=payload.plant_id,
+        zone_id=payload.zone_id,
+        data=payload.data,
+    )
+    return {"status": "recorded", "event_id": event_id}
+
+
+# ---------------------------------------------------------------------------
+# Section 6: Drying Curve Engine 2.0
+# ---------------------------------------------------------------------------
+@router.get("/drying-curves")
+async def get_drying_curves(device_id: str = "esp32-garden-01", days: int = 7):
+    """Condition-segmented soil drying rates (Morning, Afternoon, Night, Hot, Humid, Rain)."""
+    return iot_learning.calculate_drying_curve_2_0(device_id=device_id, days=days)
+
+
+# ---------------------------------------------------------------------------
+# Section 7: Predictive Watering Engine
+# ---------------------------------------------------------------------------
+@router.get("/predictive-watering")
+async def get_predictive_watering(
+    device_id: str = "esp32-garden-01",
+    plant_name: str = "Tomato",
+):
+    """Forecast when soil moisture will cross critical wilt threshold and optimal watering window."""
+    return iot_learning.predict_soil_critical_time(device_id=device_id, plant_name=plant_name)
+
+
+# ---------------------------------------------------------------------------
+# Section 8: Adaptive Watering Duration
+# ---------------------------------------------------------------------------
+@router.get("/adaptive-duration")
+async def get_adaptive_duration(
+    device_id: str = "esp32-garden-01",
+    plant_name: str = "Tomato",
+    current_moisture: Optional[float] = None,
+):
+    """Calculate learned watering runtime based on empirical recovery rate per second."""
+    return iot_learning.calculate_adaptive_watering_duration(
+        device_id=device_id,
+        plant_name=plant_name,
+        current_moisture=current_moisture,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Section 9: Flow Sensor Intelligence
+# ---------------------------------------------------------------------------
+@router.get("/flow-intelligence")
+async def get_flow_intelligence(device_id: Optional[str] = None, days: int = 30):
+    """Classify water usage as MEASURED (flow meter pulses) vs ESTIMATED (runtime)."""
+    return iot_learning.calculate_flow_intelligence(device_id=device_id, days=days)
+
+
+# ---------------------------------------------------------------------------
+# Section 11: Water Budget Subsystem
+# ---------------------------------------------------------------------------
+@router.get("/water-budget")
+async def get_water_budget():
+    """Weekly water consumption vs target with status (NORMAL, WATCH, OVER_BUDGET)."""
+    return iot_learning.calculate_water_budget()
+
+
+@router.post("/water-budget")
+async def set_water_budget(payload: WaterBudgetPayload):
+    """Configure active conservation target budget in liters."""
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            """UPDATE water_budgets
+            SET target_liters = ?, period_type = ?, warning_threshold_percent = ?, updated_at = ?
+            WHERE is_active = 1""",
+            (payload.target_liters, payload.period_type, payload.warning_threshold_percent, now_iso),
+        )
+    return {"status": "updated", "target_liters": payload.target_liters}
+
+
+# ---------------------------------------------------------------------------
+# Section 12: Microclimate Engine
+# ---------------------------------------------------------------------------
+@router.get("/microclimate")
+async def get_microclimate_map():
+    """Spatial microclimate map comparing multiple ESP32 nodes and identifying hotspots."""
+    return microclimate.get_microclimate_map()
+
+
+# ---------------------------------------------------------------------------
+# Section 5: Decision Learning Insights
+# ---------------------------------------------------------------------------
+@router.get("/feedback/insights")
+async def get_decision_feedback_insights(plant_name: Optional[str] = None):
+    """Retrieve historical human feedback insights from longitudinal outcome evaluations."""
+    return {
+        "insights": decision_learner.get_learned_decision_insights(plant_name=plant_name),
+    }
+
+
+@router.post("/feedback/evaluate")
+async def trigger_decision_outcome_evaluation():
+    """Evaluate decisions made > 6h ago against current soil telemetry."""
+    results = decision_learner.evaluate_pending_decision_outcomes()
+    return {"status": "evaluated", "evaluated_count": len(results), "results": results}
+
 

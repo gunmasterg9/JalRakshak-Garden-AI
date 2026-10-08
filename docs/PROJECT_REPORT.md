@@ -207,15 +207,105 @@ Rather than allowing unmonitored automated pump firing that risks overflowing te
 
 | Test Domain | Framework / Tool | Test Cases | Result | Duration |
 |---|---|---|---|---|
-| **IoT Telemetry & Safety Watchdog** | Pytest / FastAPI TestClient | 14 tests | **100% Passed** | ~2.1s |
-| **API Endpoints & Plant Engine** | Pytest / FastAPI TestClient | 20 tests | **100% Passed** | ~3.4s |
-| **Total Backend Test Suite** | Pytest | **34 tests** | **100% Passed** | **5.49s** |
+| **IoT Telemetry & Safety Watchdog** | Pytest / FastAPI TestClient | 14 tests | **100% Passed** | ~1.9s |
+| **API Endpoints & Plant Engine** | Pytest / FastAPI TestClient | 20 tests | **100% Passed** | ~2.1s |
+| **Advanced Intelligence & Learning**| Pytest / FastAPI TestClient | 10 tests | **100% Passed** | ~1.1s |
+| **Total Backend Test Suite** | Pytest | **44 tests** | **100% Passed** | **5.13s** |
 | **Frontend Component & App Tests** | Vitest / Testing Library | 2 suites | **100% Passed** | ~0.07s |
-| **Production Bundle Compilation** | Vite 8.3 / Rolldown | Full App | **0 Errors (Code 0)** | 11.1s |
+| **Production Bundle Compilation** | Vite 8.3 / Rolldown | Full App | **0 Errors (Code 0)** | 1.42s |
 
 ---
 
-## 10. Quick Start & Execution Guide
+## 10. Advanced Intelligence & Real Garden Learning Subsystem
+
+```text
+                    REAL GARDEN
+                         │
+              ┌──────────┼──────────┐
+              ↓          ↓          ↓
+           ESP32 #1   ESP32 #2   ESP32-CAM
+        (Terrace East) (Terrace West) (Shade Area)
+              │          │          │
+              └──────────┼──────────┘
+                         ↓
+                  IoT Gateway
+                    FastAPI
+                         ↓
+                 Sensor History
+                         ↓
+              ┌──────────┼──────────┐
+              ↓          ↓          ↓
+        Rules Engine  Learning    Weather
+              │          │          │
+              └──────────┼──────────┘
+                         ↓
+                  Garden Memory
+                         ↓
+                  Local Ollama
+                         ↓
+                AI Reasoning Layer
+                         ↓
+                Safety Decision Layer  (AI NEVER directly controls hardware)
+                         ↓
+               Pump / Valve Control
+                         ↓
+                 Real Garden Result
+                         ↓
+                    Learning
+```
+
+### 10.1 Garden Digital Twin
+Maintains live, continuously updated virtual replicas (`PlantDigitalTwin` & `ZoneDigitalTwin`) incorporating:
+- Environmental exposure (sunlight hours, container size, soil type)
+- Real-time physiological indicators (`health_score` 0–100, `water_stress`, `heat_stress`)
+- Historical consumption (`total_water_used_liters`, `last_watered`, `drying_rate`)
+
+### 10.2 Persistent Garden Memory
+Stores structured historical records across five explicit sources:
+- `SENSOR` (anomalies, wilt spikes, recovery jumps)
+- `USER` (approvals, dismissals, manual irrigations, pruning, observations)
+- `AI` (explanations, diagnostic assessments, reasoning prompts)
+- `SYSTEM` (pump runtimes, safety lockouts, watchdog triggers)
+- `WEATHER` (rain guard triggers, heatwave warnings, precipitation)
+
+### 10.3 Learning from Human Decisions
+- Correlates user approvals vs dismissals with soil and plant response over the subsequent 12–24 hours.
+- If a user dismisses a recommendation and the soil remains healthy, the system learns the threshold was overly aggressive for that container.
+- If an approved recommendation produces optimal root-zone recovery, the learned duration is reinforced.
+
+### 10.4 Drying Curve Engine 2.0
+Segments evaporation dynamics into six distinct conditions:
+- **Morning (06:00–12:00):** Moderate stomatal activity (~2.1 %/h).
+- **Afternoon (12:00–18:00):** Peak solar radiation & thermal load (~5.4 %/h).
+- **Night (18:00–06:00):** Minimal night-time stomatal transpiration (~0.8 %/h).
+- **Hot-Day ($\ge 35^\circ\text{C}$):** Elevated vapor pressure deficit (~5.8 %/h).
+- **Humid-Day ($\ge 60\%$ RH):** Slowed transpiration (~1.2 %/h).
+- **Rainy-Day:** Natural replenishment and suppressed evaporation (~0.4 %/h).
+
+### 10.5 Predictive Watering Engine
+Forecasts when soil moisture will cross critical wilt thresholds:
+- Calculates `hours_until_critical` and exact `predicted_critical_time`.
+- Recommends non-evaporative watering windows (e.g., "Tomorrow morning 06:00–07:30 AM").
+- Flags "Collecting more garden data" when insufficient samples exist, strictly preventing fabricated forecasts.
+
+### 10.6 Adaptive Watering Duration
+Learns empirical absorption rates ($+\%\text{ recovery per second of pump runtime}$) per pot:
+$$\text{Recommended Duration} = \frac{\text{Target Sweet Spot} - \text{Current Moisture}}{\text{Learned Recovery Rate / sec}}$$
+Clamped strictly between 10 seconds and the hardware safety watchdog maximum (60s).
+
+### 10.7 Flow Sensor Intelligence & Water Budgeting
+- **Source Classification:** Clearly distinguishes between `MEASURED` (from physical YF-S201 flow meter pulses) and `ESTIMATED` (from pump runtime $\times$ LPM benchmark).
+- **Water Budget Tracker:** Configurable conservation budgets (e.g., 80L/week) with automated status flags:
+  - `NORMAL` ($< 80\%$ used)
+  - `WATCH` ($80\% - 100\%$ used)
+  - `OVER_BUDGET` ($> 100\%$ used)
+
+### 10.8 Multi-Node Microclimate Engine
+Compares environmental conditions across multiple ESP32 edge nodes (e.g., Terrace East, Terrace West, Shaded Balcony) to detect thermal hotspots, microclimate divergence, and differential drying rates.
+
+---
+
+## 11. Quick Start & Execution Guide
 
 ### Starting the System
 Run the top-level launcher from the project root:
@@ -240,3 +330,4 @@ This automatically boots:
 1. Insert capacitive soil probe in bone-dry soil or air $\to$ note raw ADC in UI $\to$ Click **"Set Dry Value"**.
 2. Submerge capacitive soil probe up to white line in a cup of water $\to$ note raw ADC $\to$ Click **"Set Wet Value"**.
 3. The backend calculates linear interpolation to map all subsequent readings accurately from $0\%$ to $100\%$.
+

@@ -13,6 +13,7 @@ import { IoTDevices } from './pages/IoTDevices';
 import { GardenAI } from './pages/GardenAI';
 import { Analytics } from './pages/Analytics';
 import { Alerts } from './pages/Alerts';
+import { DigitalTwin } from './pages/DigitalTwin';
 
 export function App() {
   return (
@@ -23,6 +24,7 @@ export function App() {
             <Route index element={<Dashboard />} />
             <Route path="plants" element={<MyGarden />} />
             <Route path="iot" element={<IoTDevices />} />
+            <Route path="twin" element={<DigitalTwin />} />
             <Route path="ai" element={<GardenAI />} />
             <Route path="analytics" element={<Analytics />} />
             <Route path="alerts" element={<Alerts />} />

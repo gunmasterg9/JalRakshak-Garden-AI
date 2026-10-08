@@ -320,4 +320,116 @@ export function getPumpEventsExportUrl(deviceId = 'esp32-garden-01'): string {
   return `${API_BASE}/api/iot/export/pump_events.csv?device_id=${encodeURIComponent(deviceId)}`;
 }
 
+export async function fetchDigitalTwins(): Promise<import('./types').PlantDigitalTwin[]> {
+  const res = await fetch(`${API_BASE}/api/iot/digital-twins`);
+  if (!res.ok) throw new Error('Failed to fetch digital twins');
+  return res.json();
+}
+
+export async function fetchSingleDigitalTwin(plantId: string): Promise<import('./types').PlantDigitalTwin> {
+  const res = await fetch(`${API_BASE}/api/iot/digital-twins/${encodeURIComponent(plantId)}`);
+  if (!res.ok) throw new Error('Failed to fetch digital twin');
+  return res.json();
+}
+
+export async function fetchGardenZones(): Promise<import('./types').GardenZone[]> {
+  const res = await fetch(`${API_BASE}/api/iot/zones`);
+  if (!res.ok) throw new Error('Failed to fetch garden zones');
+  return res.json();
+}
+
+export async function fetchZoneDigitalTwin(zoneId: string): Promise<import('./types').ZoneDigitalTwin> {
+  const res = await fetch(`${API_BASE}/api/iot/zones/${encodeURIComponent(zoneId)}`);
+  if (!res.ok) throw new Error('Failed to fetch zone digital twin');
+  return res.json();
+}
+
+export async function fetchGardenMemory(hours = 72, limit = 50): Promise<import('./types').GardenMemoryEvent[]> {
+  const res = await fetch(`${API_BASE}/api/iot/memory?hours=${hours}&limit=${limit}`);
+  if (!res.ok) throw new Error('Failed to fetch garden memory');
+  return res.json();
+}
+
+export async function recordGardenMemory(payload: {
+  event_type: string;
+  source: string;
+  plant_id?: string;
+  zone_id?: string;
+  data?: Record<string, any>;
+}): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/iot/memory`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('Failed to record garden memory');
+  return res.json();
+}
+
+export async function fetchDryingCurvesV2(
+  deviceId = 'esp32-garden-01',
+  days = 7
+): Promise<import('./types').DryingCurvesV2> {
+  const res = await fetch(`${API_BASE}/api/iot/drying-curves?device_id=${encodeURIComponent(deviceId)}&days=${days}`);
+  if (!res.ok) throw new Error('Failed to fetch drying curves v2');
+  return res.json();
+}
+
+export async function fetchPredictiveWatering(
+  deviceId = 'esp32-garden-01',
+  plantName = 'Tomato'
+): Promise<import('./types').PredictiveWatering> {
+  const res = await fetch(
+    `${API_BASE}/api/iot/predictive-watering?device_id=${encodeURIComponent(deviceId)}&plant_name=${encodeURIComponent(plantName)}`
+  );
+  if (!res.ok) throw new Error('Failed to fetch predictive watering');
+  return res.json();
+}
+
+export async function fetchAdaptiveDuration(
+  deviceId = 'esp32-garden-01',
+  plantName = 'Tomato',
+  currentMoisture?: number
+): Promise<import('./types').AdaptiveDuration> {
+  const q = currentMoisture !== undefined ? `&current_moisture=${currentMoisture}` : '';
+  const res = await fetch(
+    `${API_BASE}/api/iot/adaptive-duration?device_id=${encodeURIComponent(deviceId)}&plant_name=${encodeURIComponent(plantName)}${q}`
+  );
+  if (!res.ok) throw new Error('Failed to fetch adaptive duration');
+  return res.json();
+}
+
+export async function fetchFlowIntelligence(
+  deviceId?: string,
+  days = 30
+): Promise<import('./types').FlowIntelligence> {
+  const devParam = deviceId ? `?device_id=${encodeURIComponent(deviceId)}&days=${days}` : `?days=${days}`;
+  const res = await fetch(`${API_BASE}/api/iot/flow-intelligence${devParam}`);
+  if (!res.ok) throw new Error('Failed to fetch flow intelligence');
+  return res.json();
+}
+
+export async function fetchWaterBudget(): Promise<import('./types').WaterBudget> {
+  const res = await fetch(`${API_BASE}/api/iot/water-budget`);
+  if (!res.ok) throw new Error('Failed to fetch water budget');
+  return res.json();
+}
+
+export async function updateWaterBudget(targetLiters: number): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/iot/water-budget`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_liters: targetLiters }),
+  });
+  if (!res.ok) throw new Error('Failed to update water budget');
+  return res.json();
+}
+
+export async function fetchMicroclimateMap(): Promise<import('./types').MicroclimateMap> {
+  const res = await fetch(`${API_BASE}/api/iot/microclimate`);
+  if (!res.ok) throw new Error('Failed to fetch microclimate map');
+  return res.json();
+}
+
+
 

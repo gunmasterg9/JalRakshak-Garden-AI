@@ -16,6 +16,7 @@ import {
   BrainCircuit,
   Activity,
   BellRing,
+  Layers,
 } from 'lucide-react';
 import { useGarden } from '../context/GardenContext';
 
@@ -30,6 +31,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
   const navLinks = [
     { to: '/', label: t.dashboard, icon: LayoutDashboard },
     { to: '/plants', label: t.myGarden, icon: Sprout },
+    { to: '/twin', label: 'Digital Twin & Zones', icon: Layers, badge: 'Twin' },
     { to: '/iot', label: 'Live Sensors & Pump', icon: Cpu, badge: 'ESP32' },
     { to: '/ai', label: 'Garden AI Assistant', icon: BrainCircuit },
     { to: '/analytics', label: 'Analytics & Savings', icon: Activity },

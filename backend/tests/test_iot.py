@@ -15,6 +15,8 @@ def setup_db():
     init_db()
     seed_defaults()
     iot_safety.clear_emergency_lock("esp32-garden-01")
+    iot_safety._active_pump_sessions.clear()
+    iot_safety._last_pump_stop_time.clear()
 
 
 def test_telemetry_valid_submission():

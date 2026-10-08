@@ -277,4 +277,160 @@ export interface AutomatedProposal {
   created_at: string;
 }
 
+export interface PlantDigitalTwin {
+  plant_id: string;
+  name: string;
+  zone_id: string;
+  device_id: string;
+  species: string;
+  name_gu: string;
+  name_hi: string;
+  soil_type: string;
+  sunlight_hours: number;
+  current_moisture: number;
+  target_moisture_min: number;
+  target_moisture_max: number;
+  health_score: number;
+  water_stress: 'low' | 'moderate' | 'high' | 'overwatered';
+  heat_stress: 'low' | 'moderate' | 'high';
+  drying_rate: number;
+  last_watered: string;
+  total_water_used_liters: number;
+  care_notes: string;
+  water_depth: string;
+  last_updated: string;
+}
+
+export interface GardenZone {
+  zone_id: string;
+  name: string;
+  description: string;
+  device_id: string;
+  valve_channel: number;
+  target_budget_weekly_liters: number;
+}
+
+export interface ZoneDigitalTwin {
+  zone_id: string;
+  name: string;
+  description: string;
+  device_id: string;
+  valve_channel: number;
+  target_budget_weekly_liters: number;
+  plant_count: number;
+  average_moisture: number;
+  average_health_score: number;
+  average_drying_rate: number;
+  plants: string[];
+  last_updated: string;
+}
+
+export interface GardenMemoryEvent {
+  id: number;
+  timestamp: string;
+  plant_id: string | null;
+  zone_id: string | null;
+  event_type: string;
+  source: 'SENSOR' | 'USER' | 'AI' | 'SYSTEM' | 'WEATHER';
+  data: Record<string, any>;
+}
+
+export interface DryingCurvesV2 {
+  device_id: string;
+  days_analyzed: number;
+  sample_count: number;
+  condition_rates: {
+    morning_drying_rate: number;
+    afternoon_drying_rate: number;
+    night_drying_rate: number;
+    hot_day_drying_rate: number;
+    humid_day_drying_rate: number;
+    rainy_day_drying_rate: number;
+  };
+  primary_peak_drying_window: string;
+  minimal_evaporation_window: string;
+  status: string;
+}
+
+export interface PredictiveWatering {
+  device_id: string;
+  plant_name: string;
+  status: 'critical_now' | 'predicting' | 'insufficient_data';
+  current_moisture: number | null;
+  target_threshold: number | null;
+  critical_threshold: number | null;
+  hours_until_critical: number | null;
+  predicted_critical_time: string | null;
+  prediction_confidence: 'high' | 'medium' | 'insufficient_data';
+  recommended_watering_window: string;
+  predicted_moisture_in_2h?: number;
+  predicted_moisture_in_4h?: number;
+  predicted_moisture_in_8h?: number;
+  drying_rate_applied?: number;
+  message?: string;
+}
+
+export interface AdaptiveDuration {
+  device_id: string;
+  plant_name: string;
+  current_moisture: number;
+  target_sweet_spot: number;
+  needed_moisture_increase: number;
+  learned_recovery_percent_per_second: number;
+  recommended_duration_seconds: number;
+  estimated_liters_delivered: number;
+  confidence: string;
+  historical_events_analyzed: number;
+  hardware_max_safety_limit: number;
+}
+
+export interface FlowIntelligence {
+  days_analyzed: number;
+  primary_source: 'MEASURED' | 'ESTIMATED' | 'UNKNOWN';
+  measured_liters: number;
+  estimated_liters: number;
+  total_water_liters: number;
+  measured_events_count: number;
+  estimated_events_count: number;
+  average_liters_per_watering: number;
+  daily_average_liters: number;
+  weekly_projected_liters: number;
+}
+
+export interface WaterBudget {
+  period_type: string;
+  target_liters: number;
+  consumed_liters: number;
+  remaining_liters: number;
+  percent_consumed: number;
+  status: 'NORMAL' | 'WATCH' | 'OVER_BUDGET';
+  advisory: string;
+  as_of: string;
+}
+
+export interface MicroclimateNode {
+  device_id: string;
+  name: string;
+  zone_id: string;
+  zone_name: string;
+  exposure: string;
+  temperature_c: number;
+  humidity_percent: number;
+  soil_moisture_percent: number;
+  drying_rate_percent_per_hour: number;
+  status: string;
+}
+
+export interface MicroclimateMap {
+  nodes: MicroclimateNode[];
+  node_count: number;
+  temperature_divergence_c: number;
+  humidity_divergence_percent: number;
+  hotspot_zone: string;
+  sheltered_zone: string;
+  divergence_summary: string;
+  timestamp: string;
+}
+
+
 
