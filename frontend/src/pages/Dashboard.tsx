@@ -22,6 +22,11 @@ import {
   Cpu,
   Gauge,
   Thermometer,
+  CloudRain,
+  Download,
+  Zap,
+  Check,
+  X,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -39,8 +44,13 @@ import {
   completeMission,
   fetchIoTDevices,
   sendDeviceCommand,
+  fetchWeatherForecast,
+  fetchPendingProposals,
+  actionProposal,
+  getReadingsExportUrl,
+  getPumpEventsExportUrl,
 } from '../api';
-import { Plant, JournalEntry, DailyMissionResponse, IoTDevice } from '../types';
+import { Plant, JournalEntry, DailyMissionResponse, IoTDevice, WeatherForecast, AutomatedProposal } from '../types';
 
 export const Dashboard: React.FC = () => {
   const { t, isGujaratMode } = useGarden();
@@ -48,22 +58,29 @@ export const Dashboard: React.FC = () => {
   const [journal, setJournal] = useState<JournalEntry[]>([]);
   const [dailyMission, setDailyMission] = useState<DailyMissionResponse | null>(null);
   const [iotDevices, setIotDevices] = useState<IoTDevice[]>([]);
+  const [weather, setWeather] = useState<WeatherForecast | null>(null);
+  const [proposals, setProposals] = useState<AutomatedProposal[]>([]);
+  const [wsConnected, setWsConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [completingMission, setCompletingMission] = useState(false);
   const [pumpActionLoading, setPumpActionLoading] = useState(false);
 
   const loadData = async () => {
     try {
-      const [plantsData, journalData, missionData, devData] = await Promise.all([
+      const [plantsData, journalData, missionData, devData, weatherData, propData] = await Promise.all([
         fetchPlants(),
         fetchJournal(undefined, undefined),
         fetchTodayMission(),
         fetchIoTDevices().catch(() => []),
+        fetchWeatherForecast().catch(() => null),
+        fetchPendingProposals().catch(() => []),
       ]);
       setPlants(plantsData);
       setJournal(journalData.slice(0, 5));
       setDailyMission(missionData);
       setIotDevices(devData);
+      setWeather(weatherData);
+      setProposals(propData);
     } catch (err) {
       console.error('Error loading dashboard data', err);
     } finally {
@@ -73,13 +90,38 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => {
     loadData();
+
+    // WebSocket real-time event listener
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/api/iot/ws`;
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => setWsConnected(true);
+      ws.onclose = () => setWsConnected(false);
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'telemetry_update' || msg.type === 'pump_state_change') {
+            fetchIoTDevices().then(setIotDevices).catch(() => {});
+          }
+        } catch (e) {}
+      };
+    } catch (e) {
+      console.debug('WebSocket fallback to polling', e);
+    }
+
     const interval = setInterval(async () => {
       try {
         const devs = await fetchIoTDevices();
         setIotDevices(devs);
       } catch (e) {}
     }, 5000);
-    return () => clearInterval(interval);
+
+    return () => {
+      clearInterval(interval);
+      if (ws) ws.close();
+    };
   }, []);
 
   const primaryDevice = iotDevices[0];
@@ -98,7 +140,19 @@ export const Dashboard: React.FC = () => {
     }
   };
 
+  const handleProposalAction = async (id: string, approve: boolean) => {
+    try {
+      await actionProposal(id, approve);
+      setProposals((prev) => prev.filter((p) => p.id !== id));
+      const devs = await fetchIoTDevices();
+      setIotDevices(devs);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   const handleCompleteMission = async () => {
+
 
     if (!dailyMission?.mission || dailyMission.completed) return;
     setCompletingMission(true);
@@ -162,6 +216,55 @@ export const Dashboard: React.FC = () => {
         <div className="absolute right-0 bottom-0 translate-x-10 translate-y-10 w-72 h-72 bg-emerald-500/20 rounded-full blur-3xl pointer-events-none" />
       </div>
 
+      {/* Semi-Automatic Watering Approvals Card */}
+      {proposals.length > 0 && (
+        <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-amber-600 animate-bounce" />
+              <h3 className="font-heading font-extrabold text-amber-900 text-sm sm:text-base">
+                Irrigation Proposal Awaiting Approval ({proposals.length})
+              </h3>
+            </div>
+            <span className="text-[11px] font-bold bg-amber-200 text-amber-900 px-2.5 py-0.5 rounded-full">
+              Semi-Automatic Closed Loop
+            </span>
+          </div>
+          <div className="space-y-2">
+            {proposals.map((prop) => (
+              <div
+                key={prop.id}
+                className="bg-white p-3.5 rounded-xl border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-stone-900">{prop.plant_name}</span>
+                    <span className="text-[11px] text-stone-500 font-mono">
+                      Soil: {prop.current_soil_moisture}% (Threshold: {prop.target_moisture_threshold}%)
+                    </span>
+                  </div>
+                  <p className="text-xs text-stone-600">{prop.reason}</p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => handleProposalAction(prop.id, true)}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors"
+                  >
+                    <Check className="w-3.5 h-3.5" /> Approve ({prop.duration_seconds}s)
+                  </button>
+                  <button
+                    onClick={() => handleProposalAction(prop.id, false)}
+                    className="px-3 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" /> Dismiss
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Real IoT Garden Hardware & Live Telemetry Card (Section 14 & 15) */}
       {primaryDevice && (
         <div className="bg-white rounded-2xl border border-sage p-5 sm:p-6 shadow-sm space-y-4">
@@ -195,8 +298,24 @@ export const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Quick manual pump buttons */}
-            <div className="flex items-center gap-2">
+            {/* Quick manual pump buttons and telemetry stream status */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold border ${
+                  wsConnected
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-stone-100 text-stone-600 border-stone-200'
+                }`}
+                title={wsConnected ? 'WebSocket live streaming active' : 'Fallback to 5s polling'}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    wsConnected ? 'bg-emerald-500 animate-ping' : 'bg-stone-400'
+                  }`}
+                />
+                {wsConnected ? 'Live WS' : 'Polling'}
+              </span>
+
               {!primaryDevice.pump_status?.pump_on ? (
                 <button
                   onClick={() => handlePumpCommand('PUMP_ON', 30)}
@@ -221,6 +340,14 @@ export const Dashboard: React.FC = () => {
               >
                 <ShieldAlert className="w-3.5 h-3.5" /> ⛔ STOP PUMP
               </button>
+              <a
+                href={getReadingsExportUrl()}
+                download
+                className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-bold flex items-center gap-1"
+                title="Export sensor readings as CSV"
+              >
+                <Download className="w-3.5 h-3.5" /> CSV
+              </a>
               <Link
                 to="/iot"
                 className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-bold"
@@ -279,6 +406,66 @@ export const Dashboard: React.FC = () => {
                   <span className="text-stone-500">OFF</span>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Local Weather Forecast & Rain Guard Advisory */}
+      {weather && (
+        <div
+          className={`rounded-2xl border p-4 sm:p-5 shadow-sm transition-all ${
+            weather.rain_guard?.active
+              ? 'bg-blue-50/90 border-blue-300 text-blue-950'
+              : 'bg-white border-sage text-stone-800'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-3">
+              <div
+                className={`p-2.5 rounded-xl flex-shrink-0 ${
+                  weather.rain_guard?.active
+                    ? 'bg-blue-200 text-blue-800 animate-pulse'
+                    : 'bg-amber-100 text-amber-700'
+                }`}
+              >
+                {weather.rain_guard?.active ? (
+                  <CloudRain className="w-5 h-5" />
+                ) : (
+                  <Sun className="w-5 h-5" />
+                )}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-heading font-extrabold text-sm sm:text-base">
+                    Local Weather Forecast · Open-Meteo
+                  </h3>
+                  {weather.rain_guard?.active ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-200 text-blue-900 border border-blue-400">
+                      🌧️ Rain Guard ACTIVE
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      ☀️ Clear Skies
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-stone-600 mt-1">
+                  {weather.rain_guard?.active
+                    ? `Upcoming rain (${weather.rain_guard.expected_rain_mm} mm, ${weather.rain_guard.max_probability_percent}% probability in next 24h). Automated pump irrigation paused to conserve water.`
+                    : `Current conditions: ${weather.current?.temperature_c}°C, ${weather.current?.humidity_percent}% humidity. Expected 24h precipitation: ${weather.rain_guard?.expected_rain_mm} mm.`}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs font-mono bg-white/80 px-3.5 py-2 rounded-xl border border-stone-200 self-start sm:self-auto shadow-xs">
+              <span className="flex items-center gap-1 font-bold text-sky-700">
+                <CloudRain className="w-3.5 h-3.5" /> {weather.rain_guard?.expected_rain_mm} mm rain
+              </span>
+              <span className="text-stone-300">|</span>
+              <span className="text-stone-700 font-semibold">
+                {weather.rain_guard?.max_probability_percent}% chance
+              </span>
             </div>
           </div>
         </div>

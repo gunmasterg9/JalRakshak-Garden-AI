@@ -14,12 +14,15 @@ import {
   ShieldAlert,
   Play,
   Square,
+  Download,
 } from 'lucide-react';
 import {
   fetchIoTDevices,
   sendDeviceCommand,
   calibrateSoil,
   sendDemoTelemetry,
+  getReadingsExportUrl,
+  getPumpEventsExportUrl,
 } from '../api';
 import { IoTDevice } from '../types';
 import { useGarden } from '../context/GardenContext';
@@ -148,13 +151,31 @@ export const IoTDevices: React.FC = () => {
             Real ESP32 hardware telemetry, multi-layer pump protection, and soil ADC calibration.
           </p>
         </div>
-        <button
-          onClick={loadDevices}
-          disabled={loading}
-          className="inline-flex items-center gap-2 px-3.5 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-50 shadow-sm"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href={getReadingsExportUrl()}
+            download
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-50 shadow-sm"
+            title="Download full sensor telemetry as CSV"
+          >
+            <Download className="w-3.5 h-3.5 text-sky-600" /> Export Readings CSV
+          </a>
+          <a
+            href={getPumpEventsExportUrl()}
+            download
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-50 shadow-sm"
+            title="Download pump audit history as CSV"
+          >
+            <Download className="w-3.5 h-3.5 text-nature-600" /> Export Pump Log CSV
+          </a>
+          <button
+            onClick={loadDevices}
+            disabled={loading}
+            className="inline-flex items-center gap-2 px-3.5 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-50 shadow-sm"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+        </div>
       </div>
 
       {statusMessage && (

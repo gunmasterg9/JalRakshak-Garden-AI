@@ -292,3 +292,32 @@ export async function fetchSupportedPlants(): Promise<any[]> {
   return res.json();
 }
 
+export async function fetchWeatherForecast(lat = 23.0225, lon = 72.5714): Promise<import('./types').WeatherForecast> {
+  const res = await fetch(`${API_BASE}/api/iot/weather?lat=${lat}&lon=${lon}`);
+  if (!res.ok) throw new Error('Failed to fetch weather forecast');
+  return res.json();
+}
+
+export async function fetchPendingProposals(): Promise<import('./types').AutomatedProposal[]> {
+  const res = await fetch(`${API_BASE}/api/iot/proposals/pending`);
+  if (!res.ok) throw new Error('Failed to fetch proposals');
+  return res.json();
+}
+
+export async function actionProposal(proposalId: string, approve = true): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/iot/proposals/${proposalId}/action?approve=${approve}`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error('Failed to action proposal');
+  return res.json();
+}
+
+export function getReadingsExportUrl(deviceId = 'esp32-garden-01'): string {
+  return `${API_BASE}/api/iot/export/readings.csv?device_id=${encodeURIComponent(deviceId)}`;
+}
+
+export function getPumpEventsExportUrl(deviceId = 'esp32-garden-01'): string {
+  return `${API_BASE}/api/iot/export/pump_events.csv?device_id=${encodeURIComponent(deviceId)}`;
+}
+
+

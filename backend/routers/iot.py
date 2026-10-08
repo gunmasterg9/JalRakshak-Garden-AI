@@ -1,12 +1,12 @@
-"""JalRakshak Garden AI — IoT Telemetry, Device Management, Safety & AI Ingestion Router."""
-from __future__ import annotations
-
+import csv
 import datetime
+import io
 import json
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 import config
@@ -16,9 +16,12 @@ import iot_safety
 import ollama_service
 from plant_knowledge import list_all_supported_plants, lookup_plant_knowledge
 import rules_engine
+from weather_service import get_weather_forecast
+from websocket_manager import ws_manager
 
 logger = logging.getLogger("jalrakshak.iot_router")
 router = APIRouter(prefix="/api/iot", tags=["IoT"])
+
 
 
 # ---------------------------------------------------------------------------
@@ -190,13 +193,30 @@ async def ingest_telemetry(payload: TelemetryPayload):
                 ),
             )
 
+    pump_status = iot_safety.get_pump_status(device_id)
+
+    # Broadcast real-time telemetry to all connected WebSocket clients
+    await ws_manager.broadcast({
+        "type": "telemetry_update",
+        "device_id": device_id,
+        "timestamp": payload.timestamp,
+        "temperature_c": payload.temperature_c,
+        "humidity_percent": payload.humidity_percent,
+        "soil_moisture_percent": payload.soil_moisture_percent,
+        "water_level_percent": payload.water_level_percent,
+        "pump_on": payload.pump_on,
+        "pump_status": pump_status,
+        "is_simulated": payload.is_simulated,
+    })
+
     return {
         "status": "success",
         "device_id": device_id,
         "recorded_at": payload.timestamp,
-        "pump_status": iot_safety.get_pump_status(device_id),
+        "pump_status": pump_status,
         "is_simulated": payload.is_simulated,
     }
+
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +374,13 @@ async def issue_device_command(device_id: str, cmd: DeviceCommandPayload):
             max_duration_seconds=runtime,
             reason=cmd.reason or "Manual dashboard trigger",
         )
+        pump_st = iot_safety.get_pump_status(device_id)
+        await ws_manager.broadcast({
+            "type": "pump_state_change",
+            "device_id": device_id,
+            "action": "PUMP_ON",
+            "pump_status": pump_st,
+        })
         return {
             "status": "command_dispatched",
             "device_id": device_id,
@@ -369,6 +396,13 @@ async def issue_device_command(device_id: str, cmd: DeviceCommandPayload):
             trigger_source="manual_ui",
             reason=cmd.reason or "Manual stop clicked",
         )
+        pump_st = iot_safety.get_pump_status(device_id)
+        await ws_manager.broadcast({
+            "type": "pump_state_change",
+            "device_id": device_id,
+            "action": "PUMP_OFF",
+            "pump_status": pump_st,
+        })
         return {
             "status": "command_dispatched",
             "device_id": device_id,
@@ -383,6 +417,14 @@ async def issue_device_command(device_id: str, cmd: DeviceCommandPayload):
             trigger_source="emergency_button",
             reason="Emergency stop triggered by operator",
         )
+        pump_st = iot_safety.get_pump_status(device_id)
+        await ws_manager.broadcast({
+            "type": "pump_state_change",
+            "device_id": device_id,
+            "action": "EMERGENCY_STOP",
+            "pump_status": pump_st,
+            "alert": "EMERGENCY STOP ENGAGED",
+        })
         return {
             "status": "emergency_stop_engaged",
             "device_id": device_id,
@@ -393,11 +435,19 @@ async def issue_device_command(device_id: str, cmd: DeviceCommandPayload):
 
     elif command == "CLEAR_EMERGENCY":
         iot_safety.clear_emergency_lock(device_id)
+        pump_st = iot_safety.get_pump_status(device_id)
+        await ws_manager.broadcast({
+            "type": "pump_state_change",
+            "device_id": device_id,
+            "action": "CLEAR_EMERGENCY",
+            "pump_status": pump_st,
+        })
         return {
             "status": "cleared",
             "device_id": device_id,
             "message": "Emergency lockout cleared. Normal pump operation permitted.",
         }
+
 
     elif command in ("RESET", "REQUEST_SENSOR_READING"):
         return {
@@ -570,6 +620,10 @@ async def get_iot_recommendation(
 
     history_list = [{"timestamp": r["timestamp"], "moisture": float(r["moisture_percent"])} for r in recent_soil]
 
+    # Rain Guard check from Open-Meteo weather forecast
+    forecast = await get_weather_forecast()
+    rain_guard_active = forecast.get("rain_guard", {}).get("active", False)
+
     # Deterministic rule evaluation
     decision = rules_engine.evaluate_iot_watering_decision(
         plant_name=plant_name,
@@ -579,9 +633,11 @@ async def get_iot_recommendation(
         water_level_percent=water_pct,
         recent_history=history_list,
         hours_since_last_watering=hours_since_water,
+        recent_rainfall=rain_guard_active,
     )
     decision["is_simulated"] = is_simulated
     decision["device_id"] = device_id
+    decision["rain_guard"] = forecast.get("rain_guard", {})
 
     # If Ollama is requested and available, enhance with AI reasoning
     if use_ai:
@@ -806,3 +862,136 @@ async def generate_demo_telemetry(
 async def get_supported_plants():
     """List all 16+ Indian/Gujarat supported plant species with thresholds."""
     return list_all_supported_plants()
+
+
+# ---------------------------------------------------------------------------
+# Real-Time WebSocket Streaming (Zero-Latency Live Gauges & Alarms)
+# ---------------------------------------------------------------------------
+@router.websocket("/ws")
+async def iot_websocket_stream(websocket: WebSocket):
+    """Real-time bidirectional WebSocket stream for dashboard gauges, pump counters, and alerts."""
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Send immediate heartbeat reply
+            await websocket.send_text(
+                json.dumps({
+                    "type": "pong",
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                })
+            )
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception:
+        ws_manager.disconnect(websocket)
+
+
+# ---------------------------------------------------------------------------
+# Weather Forecast & Rain Guard API (Open-Meteo Integration)
+# ---------------------------------------------------------------------------
+@router.get("/weather")
+async def get_weather(lat: float = 23.0225, lon: float = 72.5714):
+    """Fetch live Open-Meteo forecast and evaluate Rain Guard status."""
+    return await get_weather_forecast(lat=lat, lon=lon)
+
+
+# ---------------------------------------------------------------------------
+# Historical Data Export Endpoints (Standard CSV Downloads)
+# ---------------------------------------------------------------------------
+@router.get("/export/readings.csv")
+async def export_sensor_readings_csv(device_id: str = "esp32-garden-01"):
+    """Export historical sensor and soil readings as a standard CSV file."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Timestamp", "Device ID", "Sensor Type", "Value", "Unit", "Is Simulated"])
+
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT timestamp, device_id, sensor_type, value, unit, is_simulated
+            FROM sensor_readings WHERE device_id = ? ORDER BY timestamp DESC LIMIT 5000""",
+            (device_id,),
+        ).fetchall()
+        for r in rows:
+            writer.writerow([r["timestamp"], r["device_id"], r["sensor_type"], r["value"], r["unit"], r["is_simulated"]])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=jalrakshak_readings_{device_id}.csv"},
+    )
+
+
+@router.get("/export/pump_events.csv")
+async def export_pump_events_csv(device_id: str = "esp32-garden-01"):
+    """Export actuator and pumping logs as a standard CSV file."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Timestamp", "Device ID", "Action", "Trigger Source", "Runtime Seconds", "Estimated Liters", "Reason", "Success"])
+
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT timestamp, device_id, action, trigger_source, runtime_seconds, estimated_liters, reason, success
+            FROM pump_events WHERE device_id = ? ORDER BY timestamp DESC LIMIT 5000""",
+            (device_id,),
+        ).fetchall()
+        for r in rows:
+            writer.writerow([r["timestamp"], r["device_id"], r["action"], r["trigger_source"], r["runtime_seconds"], r["estimated_liters"], r["reason"], r["success"]])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=jalrakshak_pump_events_{device_id}.csv"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Automated Irrigation Proposal Queue (SEMI_AUTOMATIC Mode)
+# ---------------------------------------------------------------------------
+_pending_proposals: list[dict[str, Any]] = [
+    {
+        "id": "prop-tomato-01",
+        "device_id": "esp32-garden-01",
+        "plant_name": "Tomato",
+        "duration_seconds": 25,
+        "reason": "Soil moisture dropped to 26.5% during hot afternoon (34°C). Recommended 25s micro-irrigation pulse.",
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+]
+
+
+@router.get("/proposals/pending")
+async def get_pending_proposals():
+    """List pending watering proposals requiring user confirmation in SEMI_AUTOMATIC mode."""
+    return _pending_proposals
+
+
+@router.post("/proposals/{proposal_id}/action")
+async def action_proposal(proposal_id: str, approve: bool = True):
+    """Approve or dismiss an automated watering proposal."""
+    global _pending_proposals
+    found = None
+    for p in _pending_proposals:
+        if p["id"] == proposal_id:
+            found = p
+            break
+
+    if not found:
+        raise HTTPException(status_code=404, detail="Proposal not found.")
+
+    _pending_proposals = [p for p in _pending_proposals if p["id"] != proposal_id]
+
+    if approve:
+        # Trigger pump safely
+        return await issue_device_command(
+            device_id=found["device_id"],
+            cmd=DeviceCommandPayload(
+                command="PUMP_ON",
+                runtime_seconds=found["duration_seconds"],
+                reason=f"Approved automated proposal: {found['reason']}",
+            ),
+        )
+    return {"status": "dismissed", "proposal_id": proposal_id}
+

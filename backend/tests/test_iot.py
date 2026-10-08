@@ -184,3 +184,40 @@ def test_analytics_and_savings_calculation():
     assert "water_savings" in data
     assert "water_saved_liters" in data["water_savings"]
     assert "measurement_type" in data["water_savings"]
+
+
+def test_weather_endpoint():
+    res = client.get("/api/iot/weather")
+    assert res.status_code == 200
+    data = res.json()
+    assert "source" in data
+    assert "current" in data
+    assert "temperature_c" in data["current"]
+    assert "humidity_percent" in data["current"]
+    assert "rain_guard" in data
+    assert "active" in data["rain_guard"]
+    assert isinstance(data["rain_guard"]["active"], bool)
+
+
+def test_export_readings_csv():
+    res = client.get("/api/iot/export/readings.csv")
+    assert res.status_code == 200
+    assert "text/csv" in res.headers["content-type"]
+    content = res.text
+    assert "Timestamp,Device ID,Sensor Type,Value,Unit" in content
+
+
+def test_export_pump_events_csv():
+    res = client.get("/api/iot/export/pump_events.csv")
+    assert res.status_code == 200
+    assert "text/csv" in res.headers["content-type"]
+    content = res.text
+    assert "Timestamp,Device ID,Action,Trigger Source,Runtime Seconds" in content
+
+
+def test_pending_proposals_endpoint():
+    res = client.get("/api/iot/proposals/pending")
+    assert res.status_code == 200
+    data = res.json()
+    assert isinstance(data, list)
+

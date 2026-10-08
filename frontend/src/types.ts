@@ -247,3 +247,34 @@ export interface IoTAlert {
   resolved_at: string | null;
 }
 
+export interface WeatherForecast {
+  source: string;
+  latitude: number;
+  longitude: number;
+  current: {
+    temperature_c: number;
+    humidity_percent: number;
+    precipitation_mm: number;
+    wind_speed_kmh: number;
+    weather_code: number;
+  };
+  rain_guard: {
+    active: boolean;
+    expected_rain_mm: number;
+    max_probability_percent: number;
+    advisory: string;
+  };
+  heatwave_warning: boolean;
+  updated_at: string;
+}
+
+export interface AutomatedProposal {
+  id: string;
+  device_id: string;
+  plant_name: string;
+  duration_seconds: number;
+  reason: string;
+  created_at: string;
+}
+
+

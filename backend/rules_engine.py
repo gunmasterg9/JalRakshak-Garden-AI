@@ -335,6 +335,18 @@ def evaluate_iot_watering_decision(
             "source": "iot_safety_rule",
         }
 
+    # Rain Guard: postpone if rainfall forecasted or recent
+    if recent_rainfall:
+        return {
+            "recommendation": "WAIT",
+            "why": f"🌧️ Rain Guard Active: Rain is forecasted or recently occurred. Natural precipitation will hydrate the soil for {pk['canonical_name']}.",
+            "evidence": evidence,
+            "confidence": 95.0,
+            "action": "Postpone watering. Re-check soil moisture after rainfall has settled.",
+            "plant_info": pk,
+            "source": "rain_guard_rule",
+        }
+
     # Excessive moisture
     if soil_moisture_percent >= target_max:
         return {
