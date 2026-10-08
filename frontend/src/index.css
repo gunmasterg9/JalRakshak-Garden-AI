@@ -1,0 +1,99 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Manrope:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary-green: #237A4B;
+  --deep-green: #174A32;
+  --warm-cream: #F7F5ED;
+  --soft-sage: #E4EDDF;
+  --water-accent: #2997C8;
+}
+
+body {
+  margin: 0;
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: #F7F5ED;
+  color: #1A3026;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, .font-heading {
+  font-family: 'Manrope', 'DM Sans', sans-serif;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F0EEE4;
+}
+::-webkit-scrollbar-thumb {
+  background: #C4D3BE;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9BB894;
+}
+
+/* Glass & Card styles */
+.garden-card {
+  background: #FFFFFF;
+  border: 1px solid #E4EDDF;
+  border-radius: 1rem;
+  box-shadow: 0 4px 16px -2px rgba(23, 74, 50, 0.04);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.garden-card:hover {
+  box-shadow: 0 8px 24px -4px rgba(23, 74, 50, 0.08);
+}
+
+/* Button micro-interactions */
+.btn-primary {
+  background-color: var(--primary-green);
+  color: #FFFFFF;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.75rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(35, 122, 75, 0.2);
+}
+
+.btn-primary:hover {
+  background-color: var(--deep-green);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(23, 74, 50, 0.25);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-secondary {
+  background-color: #FFFFFF;
+  color: #237A4B;
+  border: 1px solid #C8DCBF;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.75rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.btn-secondary:hover {
+  background-color: #E4EDDF;
+  border-color: #A3C495;
+}

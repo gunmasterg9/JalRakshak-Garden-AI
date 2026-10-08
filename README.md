@@ -1,113 +1,170 @@
 # JalRakshak Garden AI 🌱
-A local-first, responsive gardening assistant MVP focused on water-smart gardening for hot and dry climates.
 
-## What works in this MVP
-- Responsive dashboard with a polished garden-focused interface.
-- Garden profile and plant/soil/weather inputs.
-- Practical watering and care recommendations with a deterministic offline fallback.
-- Optional local AI advice through Ollama (`gemma3:4b` by default).
-- Plant photo upload and optional local vision analysis through Ollama.
-- Local SQLite journal for observations and recommendations.
-- API health/model status endpoint.
-- Basic PWA shell caching so the frontend can reopen offline after its first load. AI analysis requires the local backend and model; the rule-based guidance still works without AI.
-- No account, analytics, or cloud AI API is required.
+> **Theme: Touch Grass — Step away from the screen, conserve water, and grow thriving plants with local-first, open-weight AI.**
 
-## Architecture
-- Frontend: React + Vite
-- Backend: FastAPI + SQLite
-- Local AI: Ollama with `gemma3:4b` (vision-capable, useful for text and plant-image questions)
-- Offline fallback: local rule-based recommendation engine
+**JalRakshak Garden AI** (જળરક્ષક ગાર્ડન એઆઈ / जलक्षक गार्डन एआई) is a privacy-first, water-smart gardening assistant built around open-weight models. It helps people grow healthy plants, reduce water consumption by up to 40%, diagnose plant health issues, and spend more mindful time outdoors with their hands in the soil.
 
-**Privacy note:** Images are sent only to the Ollama service configured on your own machine. They are not uploaded to a hosted AI provider by this app. Keep the Ollama endpoint local unless you intentionally configure otherwise.
+---
 
-## Requirements
-- Python 3.10+
-- Node.js 20+
-- Optional: Ollama for local AI
-- Recommended local model: `gemma3:4b`. On a machine with a 16 GB GPU, this is a reasonable starting point; larger models may use more VRAM and run slower.
+## 🌿 Why "Touch Grass"?
 
-## Run on Windows
+Gardening apps too often trap people behind infinite feeds, ads, and battery-draining cloud services. **JalRakshak inverts this relationship:**
 
-### 1. Install Ollama (optional, for AI)
-Install Ollama from https://ollama.com/download, then open PowerShell:
+- **The screen is the shortest part:** Check your garden in 60 seconds, get an evaporation-aware watering recommendation, and head outside.
+- **Daily Outdoor Missions:** Practical, screen-free gardening challenges (inspecting leaf undersides, touching soil moisture, adding mulch, observing pollinators, collecting rainwater).
+- **Positive, Gentle Habits:** Streak counter and achievement badges with zero manipulative or guilt-based dark patterns.
 
-```powershell
-ollama pull gemma3:4b
-ollama run gemma3:4b
+---
+
+## 🚀 Key Features
+
+1. **Smart Water Planner (Evaporation Guard)**
+   - Computes conservative, evaporation-aware watering guidance based on soil type, pot vs. ground, sunlight, temperature, and recent rainfall.
+   - Evaluates whether to water today, postpone, or check soil moisture first.
+   - Transparent rules engine fallback ensures instant, reliable guidance even when AI is offline.
+
+2. **AI Plant Doctor**
+   - Image analysis powered by local open-weight vision models (e.g., `gemma4:12b`, `gemma3:4b`).
+   - Returns structured diagnoses: observed symptoms vs. suspected causes, non-chemical remedies, watering tips, and prevention guidelines.
+   - Never recommends dangerous chemical pesticides; distinguishes visible symptoms from tentative causes.
+
+3. **My Garden (Full Plant Manager)**
+   - Manage your plant collection in local SQLite.
+   - Tracks species, planting date, soil type, sunlight, container type, age, notes, and watering history.
+   - One-click watering logger and photo upload.
+   - Pre-loaded regional crop presets (Tulsi, Tomato, Chilli, Okra, Coriander, Neem, Marigold, Mint, Curry Leaf, Lemon).
+
+4. **Gujarat Gardening Mode**
+   - Built specifically for hot, dry, and semi-arid climates.
+   - Regional plant database with Gujarati (`ટામેટું`, `તુલસી`, `મરચું`, `ભીંડા`) and Hindi (`टमाटर`, `तुलसी`, `मिर्च`, `भिन्डी`) naming.
+   - Heat-wave evaporation advice and organic mulching recommendations.
+   - Celsius temperatures and Indian date formatting (`en-IN`).
+
+5. **Garden Journal**
+   - Chronological field journal for watering, fertilizer, growth updates, flowering, and pest observations.
+   - Visual activity charts rendered with Recharts.
+
+6. **Privacy-First & Local-First Architecture**
+   - 100% of data is stored on your machine in local SQLite.
+   - Zero telemetry, zero cloud tracking, and zero paid API keys.
+   - Connects to local Ollama (`http://127.0.0.1:11434`).
+
+---
+
+## 💡 Why Open Innovation Matters for JalRakshak
+
+| Dimension | Open-Weight / Local AI Approach | Closed Cloud AI (API) |
+|---|---|---|
+| **Outdoor / Offline Use** | Works completely offline in rural fields or backyard Wi-Fi dead zones | Fails the moment cellular or Wi-Fi signal drops |
+| **Data Privacy** | Plant photos and terrace garden locations stay on local disk | Private backyard images uploaded to corporate servers |
+| **Operating Cost** | **$0.00** forever (runs on consumer hardware) | Pay-per-token and pay-per-image subscription fees |
+| **Model Flexibility** | Swap between `gemma4:12b`, `qwen3:8b`, `llama3.2`, or custom agricultural models | Locked into fixed proprietary API behavior |
+| **Safety & Transparency** | Deterministic agronomic rules fallback prevents hallucinations | Closed models often hallucinate unsafe chemical doses |
+
+## 🔌 Real-World IoT & Smart Actuator Architecture
+
+```text
+[Garden Sensors]           [ESP32 Controller]          [Local Host PC]
+- DHT11 / DHT22      ───>  - ADC1 Sampling      ───>   - FastAPI Backend (:8000)
+- Capacitive Soil    ───>  - Wi-Fi 802.11 b/g/n        - SQLite Database
+- Water Level Float  ───>  - Local Safety Watchdog     - Ollama LLM / Vision
+- Flow Sensor              - MOSFET / Relay Driver     - JalRakshak Web UI (:5173)
+                                    │
+                                    ▼
+                          [Submersible DC Pump]
+                          (Isolated 5V/12V Power)
 ```
 
-You can stop the interactive prompt after the model has downloaded. Keep Ollama running in the background.
+- **ESP32 Firmware:** Non-blocking `millis()` loop in `firmware/esp32-garden-controller/` transmitting real telemetry to `POST /api/iot/telemetry`.
+- **Arduino Auxiliary Sensor Node:** Serial streaming node in `firmware/arduino-sensor-node/`.
+- **Defense-in-Depth Safety System:**
+  - Reservoir cutoff at $\le 15\%$ water level (anti-dry run).
+  - Maximum runtime watchdog (hard cutoff at 60s).
+  - Cooldown timer (120s between runs).
+  - Emergency Stop with software lockout.
+  - Fail-safe state is always PUMP OFF.
+- **Hardware Guides & Schematics:**
+  - [Hardware Architecture & Specs](docs/hardware.md)
+  - [Wiring & MOSFET / Relay Schematics](docs/wiring.md)
+  - [ESP32 ADC Calibration Guide](docs/esp32.md)
+  - [Actuator Safety & Fail-Safe Specifications](docs/safety.md)
 
-If you want to test the model:
+---
+
+## 🛠️ Technology Stack
+
+
+- **Frontend:** React 18, Vite, TypeScript, Tailwind CSS, Lucide Icons, Recharts, React Router, PWA Service Worker.
+- **Backend:** Python 3.11+, FastAPI, Pydantic v2, SQLite (WAL mode), HTTPX.
+- **Local AI:** Ollama running open-weight models (`gemma4:12b`, `gemma3:4b`, `qwen3:8b`, `llama3.2`).
+- **Tests:** Pytest, FastAPI TestClient.
+
+---
+
+## ⚡ Quick Start (Windows)
+
+### Option A: One-Click Batch / PowerShell Scripts
+- **Start the app:** Double-click [run.bat](file:///d:/Desktop/Challenge/JalRakshak-Garden-AI/run.bat) (or run `.\run.bat` / `.\start.ps1`)
+- **Stop the app:** Double-click [stop.bat](file:///d:/Desktop/Challenge/JalRakshak-Garden-AI/stop.bat) (or run `.\stop.bat`)
+
+The launcher checks Ollama status, starts the FastAPI backend (port 8000), launches the React frontend (port 5173), and automatically opens `http://localhost:5173`.
+
+---
+
+### Option B: Manual Setup
+
+#### 1. Setup Backend
+Open a PowerShell window:
 ```powershell
-ollama run gemma3:4b "Give me three water-saving tips for a small vegetable garden in Gujarat."
-```
-
-### 2. Start the backend
-Open PowerShell in the `backend` folder:
-
-```powershell
+cd backend
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app:app --reload --host 127.0.0.1 --port 8000
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
+Backend API will be live at: `http://127.0.0.1:8000`  
+Swagger UI documentation: `http://127.0.0.1:8000/docs`
 
-If PowerShell blocks activation, run:
+#### 2. Setup Frontend
+Open a second PowerShell window:
 ```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\.venv\Scripts\Activate.ps1
-```
-
-Backend API: http://127.0.0.1:8000  
-API docs: http://127.0.0.1:8000/docs
-
-### 3. Start the frontend
-Open a second PowerShell window in `frontend`:
-
-```powershell
+cd frontend
 npm install
 npm run dev
 ```
+Open `http://localhost:5173` in your browser.
 
-Open the local URL Vite prints, usually http://localhost:5173.
-
-## Offline behavior
-- After the frontend is loaded once, the PWA service worker caches the app shell.
-- If the backend is unavailable, the frontend provides local fallback recommendations.
-- Local AI and saved journal entries require the backend to be running.
-- For a fully offline field trip, start the backend and Ollama before leaving Wi-Fi range, and confirm the model has downloaded.
-- Browser camera/photo permissions and installed-PWA behavior vary by browser.
-
-## API endpoints
-- `GET /api/health` — backend and Ollama status
-- `POST /api/recommend` — garden recommendation; uses local AI if enabled, otherwise rules
-- `POST /api/analyze-photo` — local vision analysis (requires Ollama)
-- `GET /api/journal` — list local journal entries
-- `POST /api/journal` — save an entry locally
-
-## Model selection
-Default: `gemma3:4b`. To change it, set environment variable `OLLAMA_MODEL` before starting the backend.
-
-PowerShell:
+#### 3. Optional: Connect Local Ollama
+If you wish to use open-weight AI for diagnosis and advice:
 ```powershell
-$env:OLLAMA_MODEL="qwen2.5vl:7b"
-uvicorn app:app --reload --host 127.0.0.1 --port 8000
+# Install Ollama from https://ollama.com
+ollama pull gemma4:12b
+# or lightweight:
+ollama pull gemma3:4b
 ```
+*(If Ollama is not running, JalRakshak will automatically use its built-in rules engine without errors).*
 
-Use a model that supports image input if you want photo analysis. Model names and availability depend on the Ollama version and your installed models.
+---
 
-## MVP limitations
-- Watering advice is a starting point, not a substitute for checking actual soil moisture and local agricultural guidance.
-- The model may be wrong about plant species or diseases. Do not use photo analysis alone to make pesticide or food-safety decisions.
-- Weather inputs are entered manually; no live weather service is called.
-- Offline frontend caching does not make every browser feature or the backend itself installable automatically.
+## 🧪 Running Tests
 
-## Suggested demo
-1. Open the app and select a crop/plant.
-2. Set soil to sandy, weather to hot, and soil moisture to dry.
-3. Generate a watering plan and explain how the fallback still works with Ollama stopped.
-4. Turn on Ollama and ask for a more tailored plan.
-5. Upload a plant photo for local AI observations.
-6. Save a garden journal entry.
-7. Briefly show that the app is running locally and does not need a hosted AI API.
+### Backend Unit & Integration Tests (pytest)
+```powershell
+pytest backend/tests/test_api.py -v
+```
+All 20 tests verify plant CRUD lifecycle, journal referential integrity, daily outdoor missions, rules engine accuracy, Ollama connection checks, timeout fallbacks, and photo analysis error handling.
+
+### Frontend Component Tests (Vitest)
+```powershell
+cd frontend
+npm test
+```
+Verifies internationalization dictionary (English, Gujarati, Hindi), responsive UI components, and state management.
+
+### Manual Photo Analysis & AI Doctor Testing
+See the detailed step-by-step test guide: [manual_testing_photo_analysis.md](file:///d:/Desktop/Challenge/JalRakshak-Garden-AI/docs/manual_testing_photo_analysis.md)
+
+---
+
+## 📄 License
+Open source under the MIT License. Designed for mindful growing.

@@ -3,3 +3,13 @@
 **/.venv/
 **/__pycache__/
 **/*.db
+**/*.db-journal
+.env
+backend/data/uploads/
+backend/data/*.db
+*.pyc
+.pytest_cache/
+htmlcov/
+.coverage
+firmware/**/.pio/
+firmware/**/.vscode/
