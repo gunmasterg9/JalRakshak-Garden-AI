@@ -167,6 +167,23 @@ ollama pull gemma3:4b
 
 ---
 
+## 🔌 IoT Hardware & Firmware Targets
+
+JalRakshak Garden AI natively supports dual microcontroller architectures with architecture-specific ADC bit-depth profiles:
+
+1. **ESP32 Dual-Core Controller** (`firmware/esp32-garden-controller`):
+   - 12-bit ADC (0–4095) with multi-zone support and flow meter counting.
+   - See [ESP32 Guide](docs/esp32.md) for 12-bit calibration and wiring.
+
+2. **LOLIN NodeMCU V3 ESP8266** (`firmware/esp8266-garden-controller`):
+   - 10-bit ADC (0–1023) with onboard 3.3V voltage divider on pin A0.
+   - DHT11 temperature and humidity telemetry via pin D2 (GPIO4).
+   - Non-blocking telemetry dispatches every 15s to `POST /api/iot/telemetry`.
+   - Hardware safety lock: Pump actuation is strictly disabled on ESP8266 nodes.
+   - See [ESP8266 Guide](docs/esp8266.md) for pinout, flashing, and calibration.
+
+---
+
 ## 🧪 Running Tests
 
 ### Backend Unit & Integration Tests (pytest)
