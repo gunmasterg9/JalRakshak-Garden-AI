@@ -25,13 +25,15 @@
 #define TELEMETRY_INTERVAL_MS 15000  // 15 seconds periodic transmission
 #define SENSOR_SAMPLE_INTERVAL_MS 3000 // 3 seconds sample smoothing
 
-// NodeMCU V3 GPIO Pin Definitions
-#define PIN_DHT D2            // GPIO4: DHT11 Data Pin
+// NodeMCU V3 GPIO Pin Definitions (matching official wiring diagram)
+#define PIN_DHT D4            // GPIO2: DHT11 Data Pin
 #define DHTTYPE DHT11         // DHT11 Sensor
 
 #define PIN_SOIL_ADC A0       // 10-bit Analog input (0 - 1023)
-#define PIN_STATUS_LED D4     // Onboard LED (Active LOW on NodeMCU)
-#define PIN_PUMP_RELAY D1     // GPIO5: Reserved for pump relay/MOSFET (HARDWARE DISABLED)
+#define PIN_SOIL1_DO D5       // GPIO14: Soil Sensor 1 Digital Output
+#define PIN_SOIL2_DO D6       // GPIO12: Soil Sensor 2 Digital Output
+#define PIN_PUMP_RELAY D7     // GPIO13: 5V Single Channel Relay IN (Active-LOW)
+#define PIN_STATUS_LED LED_BUILTIN // Onboard status indicator
 
 // Soil Moisture Calibration Defaults (ESP8266 10-bit ADC: 0 - 1023)
 #define DEFAULT_SOIL_DRY_ADC 800

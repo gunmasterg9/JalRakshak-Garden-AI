@@ -177,10 +177,12 @@ JalRakshak Garden AI natively supports dual microcontroller architectures with a
 
 2. **LOLIN NodeMCU V3 ESP8266** (`firmware/esp8266-garden-controller`):
    - 10-bit ADC (0–1023) with onboard 3.3V voltage divider on pin A0.
-   - DHT11 temperature and humidity telemetry via pin D2 (GPIO4).
-   - Non-blocking telemetry dispatches every 15s to `POST /api/iot/telemetry`.
-   - Hardware safety lock: Pump actuation is strictly disabled on ESP8266 nodes.
-   - See [ESP8266 Guide](docs/esp8266.md) for pinout, flashing, and calibration.
+   - DHT11 temperature/humidity via pin **D4 (GPIO2)** or **D2 (GPIO4)**.
+   - Dual soil sensing: Sensor 1 (A0 analog + D5 digital), Sensor 2 (D6 digital).
+   - 5V Relay module on pin **D7 (GPIO13)** with safe external DC pump switching.
+   - Complete pinout, circuit schematics, and safety instructions: [NodeMCU ESP8266 Hardware Guide](docs/esp8266.md).
+
+![NodeMCU ESP8266 Wiring Diagram](docs/images/nodemcu_esp8266_wiring_diagram.jpg)
 
 ---
 

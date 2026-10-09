@@ -7,10 +7,13 @@
 // JalRakshak Garden AI — LOLIN NodeMCU V3 ESP8266 Smart Garden Node
 // ==============================================================================
 
-// 1. PIN DEFINITIONS
-#define DHTPIN D4        // If wired to D4 (GPIO2), or change to D2 (GPIO4)
+// 1. PIN DEFINITIONS (matching official wiring diagram)
+#define DHTPIN D4        // D4 (GPIO2): DHT11 Data Pin
 #define DHTTYPE DHT11
-#define PIN_SOIL_ADC A0  // 10-bit Analog input (0 - 1023)
+#define PIN_SOIL_ADC A0  // A0: 10-bit Analog input (0 - 1023)
+#define PIN_SOIL1_DO D5  // D5 (GPIO14): Soil Sensor 1 Digital Output
+#define PIN_SOIL2_DO D6  // D6 (GPIO12): Soil Sensor 2 Digital Output
+#define PIN_RELAY D7     // D7 (GPIO13): 5V Single Channel Relay IN
 
 // 2. WI-FI CREDENTIALS
 // Replace with your actual 2.4 GHz Wi-Fi SSID and Password

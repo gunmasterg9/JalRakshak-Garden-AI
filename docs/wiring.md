@@ -24,7 +24,15 @@ Always use an electrically rated switching interface:
 
 ---
 
-## 2. Wiring Schematics
+## 2. NodeMCU ESP8266 Dedicated Wiring & Diagrams
+
+For the **LOLIN NodeMCU V3 ESP8266** (supporting DHT11 on D4, Dual Soil Sensors on A0/D5/D6, and 5V Relay on D7), see the full schematic and pin table in the [NodeMCU ESP8266 Hardware Guide](esp8266.md).
+
+![NodeMCU ESP8266 Complete Wiring Diagram](images/nodemcu_esp8266_wiring_diagram.jpg)
+
+---
+
+## 3. Wiring Schematics
 
 ### A. Isolated Relay Module Configuration (Recommended for Beginners)
 ```text
