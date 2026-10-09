@@ -46,6 +46,7 @@ app.add_middleware(
         "http://127.0.0.1:8000",
         "http://localhost:8000",
     ],
+    allow_origin_regex=r"^https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -76,6 +77,8 @@ async def health_check():
         "privacy": "local-first, no cloud telemetry",
         "storage": "local SQLite",
         "ollama_available": ollama_info["ollama_available"],
+        "rules_engine_status": "operational",
+        "ai_status": "ollama_active" if ollama_info["ollama_available"] else "deterministic_rules_active",
         "model": ollama_info["model"],
         "model_installed": ollama_info["model_installed"],
         "installed_models": ollama_info["installed_models"],
@@ -84,4 +87,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

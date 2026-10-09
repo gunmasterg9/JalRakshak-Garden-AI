@@ -21,7 +21,7 @@ try {
 # 2. Start Backend FastAPI server in background
 Write-Host "`n[2/3] Launching FastAPI Backend on http://127.0.0.1:8000..." -ForegroundColor Cyan
 $BackendPath = Join-Path $RootPath "backend"
-$BackendProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", "cd '$BackendPath'; uvicorn main:app --reload --host 127.0.0.1 --port 8000" -PassThru
+$BackendProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", "cd '$BackendPath'; uvicorn main:app --reload --host 0.0.0.0 --port 8000" -PassThru
 
 # 3. Start Frontend Vite server
 Write-Host "`n[3/3] Launching React Vite Frontend on http://127.0.0.1:5173..." -ForegroundColor Cyan

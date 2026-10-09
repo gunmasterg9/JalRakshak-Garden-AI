@@ -48,6 +48,19 @@ def evaluate_pump_start_safety(
     """
     now = datetime.datetime.now(datetime.timezone.utc)
 
+    # 0. Hardware safety guard: ESP8266 pump actuation is disabled until physical verification
+    try:
+        with get_db() as conn:
+            dev_row = conn.execute("SELECT device_type FROM devices WHERE device_id = ?", (device_id,)).fetchone()
+            dev_type = (dev_row["device_type"] if dev_row else "").lower()
+            if dev_type == "esp8266" or "8266" in device_id.lower():
+                return (
+                    False,
+                    "Pump actuation disabled for ESP8266: physical driver wiring, local watchdog, and reservoir protection pending hardware verification.",
+                )
+    except Exception as e:
+        logger.debug("Device type check failed: %s", e)
+
     # 1. Emergency lockout check
     if device_id in _emergency_lockouts:
         return False, "Emergency lockout active. Clear emergency stop before restarting pump."

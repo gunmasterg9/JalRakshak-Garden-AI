@@ -14,7 +14,7 @@ export const translations = {
     touchGrass: 'Screen-Free Challenge',
     touchGrassDesc: 'Spend 5-10 minutes outdoors with your plants. Screen time should be the shortest part of gardening.',
     aiStatusConnected: 'Local AI Ready',
-    aiStatusOffline: 'Offline Rules Engine',
+    aiStatusOffline: 'Rules Engine Operational',
     aiStatusChecking: 'Checking AI...',
     todaysFocus: "Today's Watering Focus",
     waterSaved: 'Water Saved This Week',

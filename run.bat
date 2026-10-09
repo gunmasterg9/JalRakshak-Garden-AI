@@ -21,11 +21,11 @@ if %errorlevel% equ 0 (
 echo.
 
 REM 2. Launch FastAPI Backend
-echo [2/3] Launching FastAPI Backend on http://127.0.0.1:8000...
+echo [2/3] Launching FastAPI Backend on port 8000 (0.0.0.0 for LAN/ESP8266 access)...
 if exist "%~dp0backend\.venv\Scripts\uvicorn.exe" (
-    start "JalRakshak Backend" cmd /k "title JalRakshak Backend && cd /d "%~dp0backend" && .venv\Scripts\uvicorn main:app --reload --host 127.0.0.1 --port 8000"
+    start "JalRakshak Backend" cmd /k "title JalRakshak Backend && cd /d "%~dp0backend" && .venv\Scripts\uvicorn main:app --reload --host 0.0.0.0 --port 8000"
 ) else (
-    start "JalRakshak Backend" cmd /k "title JalRakshak Backend && cd /d "%~dp0backend" && uvicorn main:app --reload --host 127.0.0.1 --port 8000"
+    start "JalRakshak Backend" cmd /k "title JalRakshak Backend && cd /d "%~dp0backend" && uvicorn main:app --reload --host 0.0.0.0 --port 8000"
 )
 
 REM 3. Launch React Frontend

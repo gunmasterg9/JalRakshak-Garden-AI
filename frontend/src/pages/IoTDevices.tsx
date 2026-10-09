@@ -15,9 +15,16 @@ import {
   Play,
   Square,
   Download,
+  Wifi,
+  Info,
+  Activity,
+  Layers,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   fetchIoTDevices,
+  fetchDeviceDiagnostics,
   sendDeviceCommand,
   calibrateSoil,
   sendDemoTelemetry,
@@ -31,24 +38,47 @@ export const IoTDevices: React.FC = () => {
   const { t } = useGarden();
   const [devices, setDevices] = useState<IoTDevice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedDeviceId, setSelectedDeviceId] = useState('esp32-garden-01');
+  const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [runtimeSeconds, setRuntimeSeconds] = useState(30);
   const [actionLoading, setActionLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
   const [demoScenario, setDemoScenario] = useState('hot_afternoon');
   const [calibrating, setCalibrating] = useState(false);
+  const [showWiringGuide, setShowWiringGuide] = useState(true);
 
   const loadDevices = async () => {
     try {
       const data = await fetchIoTDevices();
       setDevices(data);
-      if (data.length > 0 && !selectedDeviceId) {
-        setSelectedDeviceId(data[0].device_id);
+      if (data.length > 0) {
+        if (!selectedDeviceId) {
+          // Prioritize online or esp8266 device
+          const preferred =
+            data.find((d) => d.live_status === 'online') ||
+            data.find((d) => d.device_type?.toLowerCase() === 'esp8266' || d.device_id?.includes('8266')) ||
+            data[0];
+          setSelectedDeviceId(preferred.device_id);
+        }
       }
     } catch (err: any) {
       console.error('Failed to load devices:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadDiagnostics = async (devId: string) => {
+    if (!devId) return;
+    setDiagnosticsLoading(true);
+    try {
+      const diag = await fetchDeviceDiagnostics(devId);
+      setDiagnostics(diag);
+    } catch (err) {
+      console.debug('Failed to load diagnostics:', err);
+    } finally {
+      setDiagnosticsLoading(false);
     }
   };
 
@@ -58,10 +88,29 @@ export const IoTDevices: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const selectedDevice = devices.find((d) => d.device_id === selectedDeviceId) || devices[0];
+  useEffect(() => {
+    if (selectedDeviceId) {
+      loadDiagnostics(selectedDeviceId);
+    }
+  }, [selectedDeviceId]);
+
+  const selectedDevice =
+    (selectedDeviceId ? devices.find((d) => d.device_id === selectedDeviceId) : null) ||
+    devices[0];
+
+  const isEsp8266 =
+    selectedDevice?.device_type?.toLowerCase() === 'esp8266' ||
+    selectedDevice?.device_id?.toLowerCase().includes('8266');
 
   const handleCommand = async (command: string, duration?: number) => {
     if (!selectedDevice) return;
+    if (command === 'PUMP_ON' && isEsp8266) {
+      setStatusMessage({
+        text: 'Pump actuation is locked for ESP8266 nodes pending physical relay module and reservoir safety verification.',
+        type: 'warning',
+      });
+      return;
+    }
     setActionLoading(true);
     setStatusMessage(null);
     try {
@@ -71,6 +120,7 @@ export const IoTDevices: React.FC = () => {
         type: 'success',
       });
       await loadDevices();
+      if (selectedDeviceId) await loadDiagnostics(selectedDeviceId);
     } catch (err: any) {
       setStatusMessage({ text: err.message, type: 'error' });
     } finally {
@@ -82,13 +132,16 @@ export const IoTDevices: React.FC = () => {
     if (!selectedDevice) return;
     setCalibrating(true);
     try {
-      const raw = selectedDevice.latest_soil?.raw_adc || (step === 'dry' ? 3200 : 1400);
+      const defDry = isEsp8266 ? 800 : 3200;
+      const defWet = isEsp8266 ? 350 : 1400;
+      const raw = selectedDevice.latest_soil?.raw_adc ?? (step === 'dry' ? defDry : defWet);
       await calibrateSoil(selectedDevice.device_id, { step, raw_reading: raw });
       setStatusMessage({
         text: `Calibrated ${step.toUpperCase()} reading with raw ADC ${raw}`,
         type: 'success',
       });
       await loadDevices();
+      if (selectedDeviceId) await loadDiagnostics(selectedDeviceId);
     } catch (err: any) {
       setStatusMessage({ text: err.message, type: 'error' });
     } finally {
@@ -106,6 +159,7 @@ export const IoTDevices: React.FC = () => {
         type: 'warning',
       });
       await loadDevices();
+      if (selectedDeviceId) await loadDiagnostics(selectedDeviceId);
     } catch (err: any) {
       setStatusMessage({ text: err.message, type: 'error' });
     } finally {
@@ -136,6 +190,11 @@ export const IoTDevices: React.FC = () => {
     }
   };
 
+  const tempReading = selectedDevice?.latest_sensors?.find((s) => s.sensor_type === 'temperature');
+  const humReading = selectedDevice?.latest_sensors?.find((s) => s.sensor_type === 'humidity');
+  const waterReading = selectedDevice?.latest_sensors?.find((s) => s.sensor_type === 'water_level');
+  const soilMoisture = selectedDevice?.latest_soil?.moisture_percent;
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       {/* Header */}
@@ -148,30 +207,51 @@ export const IoTDevices: React.FC = () => {
             </h1>
           </div>
           <p className="text-sm text-stone-600 mt-1">
-            Real ESP32 hardware telemetry, multi-layer pump protection, and soil ADC calibration.
+            Real NodeMCU ESP8266 and ESP32 hardware telemetry, multi-layer pump protection, and soil ADC calibration.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {devices.length > 1 && (
+            <div className="flex items-center gap-1.5 mr-2">
+              <span className="text-xs font-bold text-stone-600">Controller:</span>
+              <select
+                aria-label="Select IoT Device"
+                value={selectedDevice?.device_id || ''}
+                onChange={(e) => setSelectedDeviceId(e.target.value)}
+                className="px-3 py-1.5 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-800 shadow-xs focus:ring-2 focus:ring-nature-500 outline-none"
+              >
+                {devices.map((d) => (
+                  <option key={d.device_id} value={d.device_id}>
+                    {d.name} ({d.device_type?.toUpperCase() || 'ESP'} · {d.live_status})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <a
-            href={getReadingsExportUrl()}
+            href={getReadingsExportUrl(selectedDevice?.device_id)}
             download
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-50 shadow-sm"
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-50 shadow-xs"
             title="Download full sensor telemetry as CSV"
           >
             <Download className="w-3.5 h-3.5 text-sky-600" /> Export Readings CSV
           </a>
           <a
-            href={getPumpEventsExportUrl()}
+            href={getPumpEventsExportUrl(selectedDevice?.device_id)}
             download
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-50 shadow-sm"
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-50 shadow-xs"
             title="Download pump audit history as CSV"
           >
             <Download className="w-3.5 h-3.5 text-nature-600" /> Export Pump Log CSV
           </a>
           <button
-            onClick={loadDevices}
+            onClick={() => {
+              loadDevices();
+              if (selectedDeviceId) loadDiagnostics(selectedDeviceId);
+            }}
             disabled={loading}
-            className="inline-flex items-center gap-2 px-3.5 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-50 shadow-sm"
+            className="inline-flex items-center gap-2 px-3.5 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-50 shadow-xs cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </button>
@@ -189,7 +269,7 @@ export const IoTDevices: React.FC = () => {
           }`}
         >
           <span>{statusMessage.text}</span>
-          <button onClick={() => setStatusMessage(null)} className="text-xs font-bold underline ml-4">
+          <button onClick={() => setStatusMessage(null)} className="text-xs font-bold underline ml-4 cursor-pointer">
             Dismiss
           </button>
         </div>
@@ -200,18 +280,33 @@ export const IoTDevices: React.FC = () => {
           {/* Main Controller & Live Readings */}
           <div className="lg:col-span-2 space-y-6">
             {/* Controller Card */}
-            <div className="bg-white rounded-2xl border border-sage p-6 shadow-sm">
+            <div className="bg-white rounded-2xl border border-sage p-6 shadow-xs">
               <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-stone-100">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-nature-100 flex items-center justify-center text-nature-800">
+                  <div
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                      isEsp8266 ? 'bg-sky-100 text-sky-800' : 'bg-nature-100 text-nature-800'
+                    }`}
+                  >
                     <Radio className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="font-heading font-bold text-stone-900 text-lg">
-                      {selectedDevice.name}
-                    </h2>
+                    <div className="flex items-center gap-2">
+                      <h2 className="font-heading font-bold text-stone-900 text-lg">
+                        {selectedDevice.name}
+                      </h2>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider ${
+                          isEsp8266
+                            ? 'bg-sky-100 text-sky-800 border border-sky-200'
+                            : 'bg-nature-100 text-nature-800 border border-nature-200'
+                        }`}
+                      >
+                        {isEsp8266 ? 'ESP8266 NodeMCU V3 (10-bit ADC)' : 'ESP32 Dual-Core (12-bit ADC)'}
+                      </span>
+                    </div>
                     <span className="text-xs text-stone-500 font-mono">
-                      ID: {selectedDevice.device_id} | IP: {selectedDevice.ip_address || 'DHCP'}
+                      ID: {selectedDevice.device_id} | IP: {selectedDevice.ip_address || 'DHCP'} | Mode: {selectedDevice.mode}
                     </span>
                   </div>
                 </div>
@@ -226,9 +321,15 @@ export const IoTDevices: React.FC = () => {
                     <Thermometer className="w-4 h-4 text-orange-600" /> Temperature
                   </div>
                   <div className="text-2xl font-extrabold text-stone-900 mt-2">
-                    {selectedDevice.latest_sensors?.find((s) => s.sensor_type === 'temperature')?.value ?? '--'} °C
+                    {tempReading?.value !== undefined && tempReading?.value !== null ? (
+                      `${tempReading.value} °C`
+                    ) : (
+                      <span className="text-xs font-semibold text-stone-400 bg-stone-200/60 px-2 py-0.5 rounded">
+                        Not Connected
+                      </span>
+                    )}
                   </div>
-                  <div className="text-[11px] text-stone-500 mt-0.5">DHT11 Sensor</div>
+                  <div className="text-[11px] text-stone-500 mt-0.5">DHT11 Sensor (GPIO4 / D2)</div>
                 </div>
 
                 {/* Humidity */}
@@ -237,9 +338,15 @@ export const IoTDevices: React.FC = () => {
                     <Droplets className="w-4 h-4 text-sky-600" /> Humidity
                   </div>
                   <div className="text-2xl font-extrabold text-stone-900 mt-2">
-                    {selectedDevice.latest_sensors?.find((s) => s.sensor_type === 'humidity')?.value ?? '--'} %
+                    {humReading?.value !== undefined && humReading?.value !== null ? (
+                      `${humReading.value} %`
+                    ) : (
+                      <span className="text-xs font-semibold text-stone-400 bg-stone-200/60 px-2 py-0.5 rounded">
+                        Not Connected
+                      </span>
+                    )}
                   </div>
-                  <div className="text-[11px] text-stone-500 mt-0.5">Relative RH</div>
+                  <div className="text-[11px] text-stone-500 mt-0.5">Relative RH (DHT11)</div>
                 </div>
 
                 {/* Soil Moisture */}
@@ -248,10 +355,16 @@ export const IoTDevices: React.FC = () => {
                     <Gauge className="w-4 h-4 text-emerald-600" /> Soil Moisture
                   </div>
                   <div className="text-2xl font-extrabold text-stone-900 mt-2">
-                    {selectedDevice.latest_soil?.moisture_percent ?? '--'} %
+                    {soilMoisture !== undefined && soilMoisture !== null ? (
+                      `${soilMoisture} %`
+                    ) : (
+                      <span className="text-xs font-semibold text-stone-400 bg-stone-200/60 px-2 py-0.5 rounded">
+                        Not Connected
+                      </span>
+                    )}
                   </div>
                   <div className="text-[11px] text-stone-500 mt-0.5">
-                    ADC: {selectedDevice.latest_soil?.raw_adc ?? 'N/A'}
+                    ADC: {selectedDevice.latest_soil?.raw_adc !== undefined && selectedDevice.latest_soil?.raw_adc !== null ? selectedDevice.latest_soil.raw_adc : 'N/A'} (Pin A0)
                   </div>
                 </div>
 
@@ -261,12 +374,24 @@ export const IoTDevices: React.FC = () => {
                     <Droplets className="w-4 h-4 text-cyan-600" /> Water Tank
                   </div>
                   <div className="text-2xl font-extrabold text-stone-900 mt-2">
-                    {selectedDevice.latest_sensors?.find((s) => s.sensor_type === 'water_level')?.value ?? '--'} %
+                    {waterReading?.value !== undefined && waterReading?.value !== null ? (
+                      `${waterReading.value} %`
+                    ) : (
+                      <span className="text-xs font-semibold text-stone-400 bg-stone-200/60 px-2 py-0.5 rounded">
+                        Not Connected
+                      </span>
+                    )}
                   </div>
                   <div className="text-[11px] text-stone-500 mt-0.5">
-                    {(selectedDevice.latest_sensors?.find((s) => s.sensor_type === 'water_level')?.value ?? 0) <= 15
-                      ? '⚠ CRITICAL'
-                      : 'NORMAL'}
+                    {waterReading?.value !== undefined && waterReading?.value !== null ? (
+                      waterReading.value <= 15 ? (
+                        <span className="text-rose-600 font-bold">⚠ CRITICAL</span>
+                      ) : (
+                        <span className="text-emerald-600 font-semibold">NORMAL</span>
+                      )
+                    ) : (
+                      'Float Sensor Optional'
+                    )}
                   </div>
                 </div>
               </div>
@@ -280,32 +405,45 @@ export const IoTDevices: React.FC = () => {
             </div>
 
             {/* Actuator & Safety System Control Card */}
-            <div className="bg-white rounded-2xl border border-sage p-6 shadow-sm space-y-5">
+            <div className="bg-white rounded-2xl border border-sage p-6 shadow-xs space-y-5">
               <div className="flex items-center justify-between pb-3 border-b border-stone-100">
                 <div className="flex items-center gap-2 font-heading font-bold text-stone-900">
                   <Power className="w-5 h-5 text-nature-700" />
                   <span>Pump Actuator & Safety Guard</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  {selectedDevice.pump_status.emergency_locked && (
+                  {selectedDevice.pump_status?.emergency_locked && (
                     <span className="px-2.5 py-0.5 bg-rose-100 text-rose-800 border border-rose-300 rounded-full text-xs font-bold">
                       EMERGENCY LOCKOUT
                     </span>
                   )}
                   <span
                     className={`px-3 py-1 rounded-full text-xs font-bold ${
-                      selectedDevice.pump_status.pump_on
+                      selectedDevice.pump_status?.pump_on
                         ? 'bg-emerald-500 text-white animate-pulse'
                         : 'bg-stone-100 text-stone-600'
                     }`}
                   >
-                    Pump: {selectedDevice.pump_status.pump_on ? 'ACTIVE (PUMPING)' : 'OFF'}
+                    Pump: {selectedDevice.pump_status?.pump_on ? 'ACTIVE (PUMPING)' : 'OFF'}
                   </span>
                 </div>
               </div>
 
+              {/* ESP8266 Lockout Notice */}
+              {isEsp8266 && (
+                <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-xl text-xs text-amber-950 space-y-1">
+                  <div className="flex items-center gap-2 font-bold text-amber-900">
+                    <ShieldAlert className="w-4 h-4 text-amber-600" />
+                    <span>Hardware Safety Guard: Actuation Locked for NodeMCU ESP8266</span>
+                  </div>
+                  <p className="text-amber-800 leading-relaxed">
+                    Pump actuation commands are strictly disabled on the NodeMCU controller pending physical relay module wiring, optocoupler/flyback diode protection, and float switch verification.
+                  </p>
+                </div>
+              )}
+
               {/* Pump Runtime Tracker */}
-              {selectedDevice.pump_status.pump_on && (
+              {selectedDevice.pump_status?.pump_on && (
                 <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-emerald-900">
                   <div className="flex items-center gap-2">
                     <Clock className="w-5 h-5 text-emerald-600 animate-spin" />
@@ -320,7 +458,7 @@ export const IoTDevices: React.FC = () => {
               )}
 
               {/* Cooldown Warning */}
-              {selectedDevice.pump_status.cooldown_remaining_seconds > 0 && !selectedDevice.pump_status.pump_on && (
+              {(selectedDevice.pump_status?.cooldown_remaining_seconds ?? 0) > 0 && !selectedDevice.pump_status?.pump_on && (
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs font-medium text-amber-900">
                   <Clock className="w-4 h-4 text-amber-600" />
                   <span>
@@ -341,19 +479,31 @@ export const IoTDevices: React.FC = () => {
                   max="60"
                   step="5"
                   value={runtimeSeconds}
-                  disabled={selectedDevice.pump_status.pump_on}
+                  disabled={selectedDevice.pump_status?.pump_on || isEsp8266}
                   onChange={(e) => setRuntimeSeconds(Number(e.target.value))}
-                  className="w-full accent-nature-600 cursor-pointer"
+                  className="w-full accent-nature-600 cursor-pointer disabled:opacity-40"
                 />
               </div>
 
               {/* Action Buttons */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-                {!selectedDevice.pump_status.pump_on ? (
+                {isEsp8266 ? (
+                  <button
+                    disabled
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-stone-200 text-stone-500 rounded-xl text-xs font-bold cursor-not-allowed"
+                    title="Pump actuation is locked for ESP8266"
+                  >
+                    🔒 Pump Locked (Safety Guard)
+                  </button>
+                ) : !selectedDevice.pump_status?.pump_on ? (
                   <button
                     onClick={() => handleCommand('PUMP_ON')}
-                    disabled={actionLoading || selectedDevice.pump_status.cooldown_remaining_seconds > 0 || selectedDevice.pump_status.emergency_locked}
-                    className="flex items-center justify-center gap-2 px-4 py-3 bg-nature-700 hover:bg-nature-800 disabled:opacity-50 text-white rounded-xl text-sm font-bold shadow-sm transition-all"
+                    disabled={
+                      actionLoading ||
+                      (selectedDevice.pump_status?.cooldown_remaining_seconds ?? 0) > 0 ||
+                      selectedDevice.pump_status?.emergency_locked
+                    }
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-nature-700 hover:bg-nature-800 disabled:opacity-50 text-white rounded-xl text-sm font-bold shadow-xs transition-all cursor-pointer"
                   >
                     <Play className="w-4 h-4" /> Start Pump ({runtimeSeconds}s)
                   </button>
@@ -361,7 +511,7 @@ export const IoTDevices: React.FC = () => {
                   <button
                     onClick={() => handleCommand('PUMP_OFF')}
                     disabled={actionLoading}
-                    className="flex items-center justify-center gap-2 px-4 py-3 bg-stone-700 hover:bg-stone-800 text-white rounded-xl text-sm font-bold shadow-sm"
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-stone-700 hover:bg-stone-800 text-white rounded-xl text-sm font-bold shadow-xs cursor-pointer"
                   >
                     <Square className="w-4 h-4" /> Turn Off Pump
                   </button>
@@ -371,16 +521,16 @@ export const IoTDevices: React.FC = () => {
                 <button
                   onClick={() => handleCommand('EMERGENCY_STOP')}
                   disabled={actionLoading}
-                  className="flex items-center justify-center gap-2 px-4 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-sm font-bold shadow-sm"
+                  className="flex items-center justify-center gap-2 px-4 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-sm font-bold shadow-xs cursor-pointer"
                 >
                   <ShieldAlert className="w-4 h-4" /> ⛔ STOP PUMP
                 </button>
 
-                {selectedDevice.pump_status.emergency_locked ? (
+                {selectedDevice.pump_status?.emergency_locked ? (
                   <button
                     onClick={() => handleCommand('CLEAR_EMERGENCY')}
                     disabled={actionLoading}
-                    className="flex items-center justify-center gap-2 px-4 py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-bold shadow-sm"
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-bold shadow-xs cursor-pointer"
                   >
                     Clear Emergency Lock
                   </button>
@@ -388,44 +538,245 @@ export const IoTDevices: React.FC = () => {
                   <button
                     onClick={() => handleCommand('REQUEST_SENSOR_READING')}
                     disabled={actionLoading}
-                    className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-stone-300 hover:bg-stone-50 text-stone-700 rounded-xl text-sm font-bold shadow-sm"
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-stone-300 hover:bg-stone-50 text-stone-700 rounded-xl text-sm font-bold shadow-xs cursor-pointer"
                   >
                     <RefreshCw className="w-4 h-4" /> Sample Now
                   </button>
                 )}
               </div>
             </div>
+
+            {/* Hardware Setup & Wiring Reference Collapsible */}
+            <div className="bg-white rounded-2xl border border-sage p-6 shadow-xs space-y-4">
+              <div
+                className="flex items-center justify-between cursor-pointer select-none"
+                onClick={() => setShowWiringGuide(!showWiringGuide)}
+              >
+                <div className="flex items-center gap-2 font-heading font-bold text-stone-900">
+                  <Layers className="w-5 h-5 text-nature-700" />
+                  <span>LOLIN NodeMCU V3 ESP8266 Hardware Pinout & Wiring</span>
+                </div>
+                <button className="text-stone-500 hover:text-stone-800">
+                  {showWiringGuide ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </button>
+              </div>
+
+              {showWiringGuide && (
+                <div className="pt-2 space-y-4 text-xs text-stone-700">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse border border-stone-200 rounded-lg">
+                      <thead>
+                        <tr className="bg-stone-100 text-stone-800 font-bold">
+                          <th className="p-2 border border-stone-200">Component</th>
+                          <th className="p-2 border border-stone-200">Sensor Pin</th>
+                          <th className="p-2 border border-stone-200">NodeMCU Pin</th>
+                          <th className="p-2 border border-stone-200">ESP8266 GPIO</th>
+                          <th className="p-2 border border-stone-200">Electrical Spec</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="hover:bg-stone-50">
+                          <td className="p-2 font-bold text-orange-800 border border-stone-200">DHT11 Temp / Humidity</td>
+                          <td className="p-2 border border-stone-200">DATA (Pin 2)</td>
+                          <td className="p-2 font-mono font-bold text-sky-700 border border-stone-200">D2</td>
+                          <td className="p-2 font-mono border border-stone-200">GPIO4</td>
+                          <td className="p-2 border border-stone-200">3.3V logic · 10kΩ pull-up resistor to 3V3</td>
+                        </tr>
+                        <tr className="hover:bg-stone-50">
+                          <td className="p-2 font-bold text-orange-800 border border-stone-200">DHT11 Power</td>
+                          <td className="p-2 border border-stone-200">VCC / GND</td>
+                          <td className="p-2 font-mono border border-stone-200">3V3 / GND</td>
+                          <td className="p-2 font-mono border border-stone-200">—</td>
+                          <td className="p-2 border border-stone-200">3.3V power rail</td>
+                        </tr>
+                        <tr className="hover:bg-stone-50">
+                          <td className="p-2 font-bold text-emerald-800 border border-stone-200">Soil Moisture (LM393)</td>
+                          <td className="p-2 border border-stone-200">AOUT (Analog)</td>
+                          <td className="p-2 font-mono font-bold text-emerald-700 border border-stone-200">A0</td>
+                          <td className="p-2 font-mono border border-stone-200">A0 (ADC0)</td>
+                          <td className="p-2 border border-stone-200">10-bit ADC (0–1023) · Board divider supports 0–3.3V</td>
+                        </tr>
+                        <tr className="hover:bg-stone-50">
+                          <td className="p-2 font-bold text-emerald-800 border border-stone-200">Soil Sensor Power</td>
+                          <td className="p-2 border border-stone-200">VCC / GND</td>
+                          <td className="p-2 font-mono border border-stone-200">3V3 / GND</td>
+                          <td className="p-2 font-mono border border-stone-200">—</td>
+                          <td className="p-2 border border-stone-200">3.3V logic (Max 3.3V input to A0)</td>
+                        </tr>
+                        <tr className="hover:bg-stone-50">
+                          <td className="p-2 font-bold text-stone-800 border border-stone-200">Serial UART (CH340)</td>
+                          <td className="p-2 border border-stone-200">Micro USB</td>
+                          <td className="p-2 font-mono border border-stone-200">USB Port</td>
+                          <td className="p-2 font-mono border border-stone-200">TXD0 / RXD0</td>
+                          <td className="p-2 border border-stone-200">COM4 · 115200 baud · Host PC</td>
+                        </tr>
+                        <tr className="hover:bg-stone-50 bg-amber-50/50">
+                          <td className="p-2 font-bold text-amber-900 border border-stone-200">Mini DC Pump</td>
+                          <td className="p-2 border border-stone-200">Motor Leads</td>
+                          <td className="p-2 font-bold text-amber-800 border border-stone-200">LOCKED</td>
+                          <td className="p-2 font-mono border border-stone-200">—</td>
+                          <td className="p-2 border border-stone-200">Actuation disabled for safety</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="bg-sky-50 p-3 rounded-xl border border-sky-200 flex items-start gap-2.5">
+                    <Info className="w-4 h-4 text-sky-700 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-sky-900">ADC Voltage Divider Architecture: </span>
+                      <span className="text-sky-800">
+                        The LOLIN NodeMCU V3 includes an onboard resistor voltage divider (220kΩ / 100kΩ) connected to pin A0, allowing external signals up to 3.3V to be safely sampled. Raw ESP8266EX bare-chip ADC pins have a strict 1.0V maximum limit.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Live Diagnostics Card */}
+            {diagnostics && (
+              <div className="bg-white rounded-2xl border border-sage p-6 shadow-xs space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-stone-100">
+                  <div className="flex items-center gap-2 font-heading font-bold text-stone-900">
+                    <Activity className="w-5 h-5 text-nature-700" />
+                    <span>Real-Time Controller Diagnostics</span>
+                  </div>
+                  <span className="text-xs font-mono text-stone-500">
+                    Resolution: {diagnostics.adc_specs?.resolution_bits}-bit ({diagnostics.adc_specs?.max_raw_value} max)
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                  <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
+                    <span className="text-stone-500 font-semibold">Controller Architecture</span>
+                    <div className="font-bold text-stone-900 text-sm mt-0.5">{diagnostics.device_type}</div>
+                    <div className="text-[11px] text-stone-500 mt-1">{diagnostics.adc_specs?.voltage_limit}</div>
+                  </div>
+
+                  <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
+                    <span className="text-stone-500 font-semibold">Connection Liveness</span>
+                    <div className="font-bold text-stone-900 text-sm mt-0.5 capitalize flex items-center gap-1.5">
+                      {diagnostics.live_status === 'online' ? '🟢 Online' : diagnostics.live_status === 'delayed' ? '🟡 Delayed' : '🔴 Offline'}
+                    </div>
+                    <div className="text-[11px] text-stone-500 mt-1">
+                      {diagnostics.last_seen_seconds_ago !== null
+                        ? `Last heartbeat: ${diagnostics.last_seen_seconds_ago}s ago`
+                        : 'No heartbeat recorded'}
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
+                    <span className="text-stone-500 font-semibold">Network Binding</span>
+                    <div className="font-bold text-stone-900 text-sm mt-0.5 font-mono">{diagnostics.ip_address}</div>
+                    <div className="text-[11px] text-stone-500 mt-1">Timeout: {diagnostics.heartbeat_timeout_seconds}s</div>
+                  </div>
+                </div>
+
+                {/* Sensor Health Status Table */}
+                <div className="pt-2">
+                  <span className="text-xs font-bold text-stone-800 block mb-2">Sensor Health Matrix</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="p-3 rounded-xl border border-stone-200 bg-stone-50">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-stone-800">DHT11 Temp/RH</span>
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            diagnostics.sensor_health?.dht11?.status === 'connected'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : diagnostics.sensor_health?.dht11?.status === 'degraded'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-stone-200 text-stone-600'
+                          }`}
+                        >
+                          {diagnostics.sensor_health?.dht11?.status?.replace('_', ' ') || 'unknown'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-stone-500 mt-1">
+                        {diagnostics.sensor_health?.dht11?.last_temperature !== null && diagnostics.sensor_health?.dht11?.last_temperature !== undefined
+                          ? `${diagnostics.sensor_health.dht11.last_temperature} °C / ${diagnostics.sensor_health.dht11.last_humidity} %`
+                          : 'No readings received'}
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-xl border border-stone-200 bg-stone-50">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-stone-800">Soil Probe</span>
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            diagnostics.sensor_health?.soil_moisture?.status === 'connected'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-stone-200 text-stone-600'
+                          }`}
+                        >
+                          {diagnostics.sensor_health?.soil_moisture?.status?.replace('_', ' ') || 'unknown'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-stone-500 mt-1">
+                        {diagnostics.sensor_health?.soil_moisture?.moisture_percent !== null && diagnostics.sensor_health?.soil_moisture?.moisture_percent !== undefined
+                          ? `${diagnostics.sensor_health.soil_moisture.moisture_percent} % (ADC ${diagnostics.sensor_health.soil_moisture.raw_adc})`
+                          : 'Probe not connected'}
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-xl border border-stone-200 bg-stone-50">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-stone-800">Water Tank Float</span>
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            diagnostics.sensor_health?.water_tank?.status === 'connected'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-stone-200 text-stone-600'
+                          }`}
+                        >
+                          {diagnostics.sensor_health?.water_tank?.status?.replace('_', ' ') || 'not connected'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-stone-500 mt-1">Float sensor optional</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right Column: Calibration & Demo Mode */}
           <div className="space-y-6">
             {/* Calibration Tool */}
-            <div className="bg-white rounded-2xl border border-sage p-6 shadow-sm space-y-4">
+            <div className="bg-white rounded-2xl border border-sage p-6 shadow-xs space-y-4">
               <div className="flex items-center gap-2 font-heading font-bold text-stone-900 border-b border-stone-100 pb-3">
                 <Sliders className="w-5 h-5 text-nature-700" />
                 <span>Soil Sensor Calibration</span>
               </div>
               <p className="text-xs text-stone-600 leading-relaxed">
-                Raw 12-bit ADC values (0–4095) vary by sensor. Calibrate dry air (3200) vs full water (1400) to ensure accurate percentage.
+                Raw {isEsp8266 ? '10-bit ADC values (0–1023)' : '12-bit ADC values (0–4095)'} vary by sensor. Calibrate dry air ({isEsp8266 ? '800' : '3200'}) vs full water ({isEsp8266 ? '350' : '1400'}) to ensure accurate soil percentage.
               </p>
 
               <div className="bg-stone-50 rounded-xl p-3 border border-stone-200 text-xs space-y-2">
                 <div className="flex justify-between">
                   <span className="text-stone-500">Current Raw ADC:</span>
                   <span className="font-mono font-bold text-stone-900">
-                    {selectedDevice.latest_soil?.raw_adc ?? 'N/A'}
+                    {selectedDevice.latest_soil?.raw_adc !== undefined && selectedDevice.latest_soil?.raw_adc !== null
+                      ? selectedDevice.latest_soil.raw_adc
+                      : 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-stone-500">ADC Bit Depth:</span>
+                  <span className="font-mono font-bold text-sky-700">
+                    {isEsp8266 ? '10-bit (0–1023)' : '12-bit (0–4095)'}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-stone-500">Dry Value (Air):</span>
                   <span className="font-mono font-bold text-stone-900">
-                    {selectedDevice.calibration?.dry_value ?? 3200}
+                    {selectedDevice.calibration?.dry_value ?? (isEsp8266 ? 800 : 3200)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-stone-500">Wet Value (Water):</span>
                   <span className="font-mono font-bold text-stone-900">
-                    {selectedDevice.calibration?.wet_value ?? 1400}
+                    {selectedDevice.calibration?.wet_value ?? (isEsp8266 ? 350 : 1400)}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -440,14 +791,14 @@ export const IoTDevices: React.FC = () => {
                 <button
                   onClick={() => handleCalibrate('dry')}
                   disabled={calibrating}
-                  className="px-3 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-xl text-xs font-bold transition-all border border-stone-300"
+                  className="px-3 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-xl text-xs font-bold transition-all border border-stone-300 cursor-pointer"
                 >
                   Save Dry (Air)
                 </button>
                 <button
                   onClick={() => handleCalibrate('wet')}
                   disabled={calibrating}
-                  className="px-3 py-2.5 bg-nature-100 hover:bg-nature-200 text-nature-900 rounded-xl text-xs font-bold transition-all border border-nature-300"
+                  className="px-3 py-2.5 bg-nature-100 hover:bg-nature-200 text-nature-900 rounded-xl text-xs font-bold transition-all border border-nature-300 cursor-pointer"
                 >
                   Save Wet (Water)
                 </button>
@@ -455,13 +806,13 @@ export const IoTDevices: React.FC = () => {
             </div>
 
             {/* Simulated Demo Mode Box (Section 34) */}
-            <div className="bg-white rounded-2xl border border-sage p-6 shadow-sm space-y-4">
+            <div className="bg-white rounded-2xl border border-sage p-6 shadow-xs space-y-4">
               <div className="flex items-center gap-2 font-heading font-bold text-stone-900 border-b border-stone-100 pb-3">
                 <AlertTriangle className="w-5 h-5 text-amber-600" />
                 <span>Simulation / Demo Mode</span>
               </div>
               <p className="text-xs text-stone-600 leading-relaxed">
-                Test the watering rules engine and AI responses without physical hardware. Data injected is clearly tagged with the <code>is_simulated</code> flag.
+                Test the watering rules engine and AI responses without physical hardware. Injected telemetry is strictly flagged with <code>is_simulated</code>.
               </p>
 
               <div>
@@ -483,7 +834,7 @@ export const IoTDevices: React.FC = () => {
               <button
                 onClick={handleSendDemo}
                 disabled={actionLoading}
-                className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5"
+                className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Play className="w-3.5 h-3.5" /> Inject Demo Telemetry
               </button>

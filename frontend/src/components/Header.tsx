@@ -39,9 +39,13 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
       );
     }
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-stone-100 text-stone-700 border border-stone-200">
-        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-        <span>{t.aiStatusOffline}</span>
+      <span
+        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50/80 text-emerald-800 border border-emerald-200"
+        title="Deterministic botanical rules engine is active. Local Ollama LLM is offline (optional)."
+      >
+        <span className="w-2 h-2 rounded-full bg-emerald-500" />
+        <span className="font-semibold">{t.aiStatusOffline}</span>
+        <span className="text-[10px] text-stone-500 font-medium">· Ollama Offline</span>
       </span>
     );
   };

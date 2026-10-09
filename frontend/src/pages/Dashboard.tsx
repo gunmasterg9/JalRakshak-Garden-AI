@@ -61,6 +61,7 @@ export const Dashboard: React.FC = () => {
   const [weather, setWeather] = useState<WeatherForecast | null>(null);
   const [proposals, setProposals] = useState<AutomatedProposal[]>([]);
   const [wsConnected, setWsConnected] = useState(false);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [completingMission, setCompletingMission] = useState(false);
   const [pumpActionLoading, setPumpActionLoading] = useState(false);
@@ -124,13 +125,25 @@ export const Dashboard: React.FC = () => {
     };
   }, []);
 
-  const primaryDevice = iotDevices[0];
+  // Dynamically resolve active device: prioritize selected -> online -> ESP8266 -> first device
+  const activeDevice =
+    (selectedDeviceId ? iotDevices.find((d) => d.device_id === selectedDeviceId) : null) ||
+    iotDevices.find((d) => d.live_status === 'online') ||
+    iotDevices.find((d) => d.device_type?.toLowerCase() === 'esp8266' || d.device_id?.toLowerCase().includes('8266')) ||
+    iotDevices[0];
 
   const handlePumpCommand = async (cmd: string, duration = 30) => {
-    if (!primaryDevice) return;
+    if (!activeDevice) return;
+    if (
+      cmd === 'PUMP_ON' &&
+      (activeDevice.device_type?.toLowerCase() === 'esp8266' || activeDevice.device_id?.toLowerCase().includes('8266'))
+    ) {
+      alert('Pump actuation is disabled for ESP8266 nodes until physical relay wiring, watchdog, and reservoir safety checks are verified.');
+      return;
+    }
     setPumpActionLoading(true);
     try {
-      await sendDeviceCommand(primaryDevice.device_id, cmd, duration, 'Dashboard manual trigger');
+      await sendDeviceCommand(activeDevice.device_id, cmd, duration, 'Dashboard manual trigger');
       const devs = await fetchIoTDevices();
       setIotDevices(devs);
     } catch (err: any) {
@@ -266,150 +279,217 @@ export const Dashboard: React.FC = () => {
       )}
 
       {/* Real IoT Garden Hardware & Live Telemetry Card (Section 14 & 15) */}
-      {primaryDevice && (
-        <div className="bg-white rounded-2xl border border-sage p-5 sm:p-6 shadow-sm space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-stone-100">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-nature-100 flex items-center justify-center text-nature-800">
-                <Radio className="w-5 h-5" />
+      {activeDevice && (() => {
+        const tempReading = activeDevice.latest_sensors?.find(s => s.sensor_type === 'temperature');
+        const humReading = activeDevice.latest_sensors?.find(s => s.sensor_type === 'humidity');
+        const waterReading = activeDevice.latest_sensors?.find(s => s.sensor_type === 'water_level');
+        const soilMoisture = activeDevice.latest_soil?.moisture_percent;
+        const isEsp8266 = activeDevice.device_type?.toLowerCase() === 'esp8266' || activeDevice.device_id?.toLowerCase().includes('8266');
+
+        return (
+          <div className="bg-white rounded-2xl border border-sage p-5 sm:p-6 shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-stone-100">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                  isEsp8266 ? 'bg-sky-100 text-sky-800' : 'bg-nature-100 text-nature-800'
+                }`}>
+                  <Radio className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="font-heading font-extrabold text-stone-900 text-base">
+                      {isEsp8266 ? 'NodeMCU ESP8266 Garden Node' : 'ESP32 Garden Controller'}
+                    </h2>
+                    {activeDevice.live_status === 'online' ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> 🟢 Online
+                      </span>
+                    ) : activeDevice.live_status === 'delayed' ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                        <span className="w-2 h-2 rounded-full bg-amber-500" /> 🟡 Delayed
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                        <span className="w-2 h-2 rounded-full bg-rose-500" /> 🔴 Offline
+                      </span>
+                    )}
+
+                    {isEsp8266 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-sky-50 text-sky-700 border border-sky-200">
+                        10-bit ADC · DHT11 Active
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 mt-0.5">
+                    <span className="text-xs text-stone-500 font-mono">
+                      ID: {activeDevice.device_id} · Mode: {activeDevice.mode} {activeDevice.ip_address ? `· IP: ${activeDevice.ip_address}` : ''}
+                    </span>
+                    {iotDevices.length > 1 && (
+                      <select
+                        aria-label="Select IoT Controller"
+                        value={activeDevice.device_id}
+                        onChange={(e) => setSelectedDeviceId(e.target.value)}
+                        className="text-xs border border-stone-200 rounded px-1.5 py-0.5 bg-stone-50 text-stone-700"
+                      >
+                        {iotDevices.map((d) => (
+                          <option key={d.device_id} value={d.device_id}>
+                            {d.name} ({d.device_type?.toUpperCase() || 'ESP'})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="font-heading font-extrabold text-stone-900 text-base">
-                    ESP32 Garden Controller
-                  </h2>
-                  {primaryDevice.live_status === 'online' ? (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> 🟢 Online
-                    </span>
-                  ) : primaryDevice.live_status === 'delayed' ? (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                      <span className="w-2 h-2 rounded-full bg-amber-500" /> 🟡 Delayed
-                    </span>
+
+              {/* Quick manual pump buttons and telemetry stream status */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold border ${
+                    wsConnected
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-stone-100 text-stone-600 border-stone-200'
+                  }`}
+                  title={wsConnected ? 'WebSocket live streaming active' : 'Fallback to 5s polling'}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      wsConnected ? 'bg-emerald-500 animate-ping' : 'bg-stone-400'
+                    }`}
+                  />
+                  {wsConnected ? 'Live WS' : 'Polling'}
+                </span>
+
+                {isEsp8266 ? (
+                  <span
+                    className="px-3 py-1.5 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-xs font-semibold"
+                    title="Pump actuation is disabled for ESP8266 until physical driver wiring and local safety checks are verified."
+                  >
+                    🔒 Pump Locked (Safety Guard)
+                  </span>
+                ) : !activeDevice.pump_status?.pump_on ? (
+                  <button
+                    onClick={() => handlePumpCommand('PUMP_ON', 30)}
+                    disabled={pumpActionLoading || (activeDevice.pump_status?.cooldown_remaining_seconds ?? 0) > 0 || activeDevice.pump_status?.emergency_locked}
+                    className="px-3 py-1.5 bg-nature-700 hover:bg-nature-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5"
+                  >
+                    <Power className="w-3.5 h-3.5" /> 💧 Turn Pump ON (30s)
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handlePumpCommand('PUMP_OFF')}
+                    disabled={pumpActionLoading}
+                    className="px-3 py-1.5 bg-stone-700 hover:bg-stone-800 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5"
+                  >
+                    <Power className="w-3.5 h-3.5" /> Turn Pump OFF
+                  </button>
+                )}
+
+                <button
+                  onClick={() => handlePumpCommand('EMERGENCY_STOP')}
+                  disabled={pumpActionLoading}
+                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5"
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" /> ⛔ STOP PUMP
+                </button>
+                <a
+                  href={getReadingsExportUrl(activeDevice.device_id)}
+                  download
+                  className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-bold flex items-center gap-1"
+                  title="Export sensor readings as CSV"
+                >
+                  <Download className="w-3.5 h-3.5" /> CSV
+                </a>
+                <Link
+                  to="/iot"
+                  className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-bold"
+                >
+                  Full Controls →
+                </Link>
+              </div>
+            </div>
+
+            {/* Real Sensor Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
+                <span className="text-[11px] font-bold text-stone-500 uppercase flex items-center gap-1">
+                  <Thermometer className="w-3.5 h-3.5 text-orange-600" /> Temperature
+                </span>
+                <div className="text-xl font-extrabold text-stone-900 mt-1">
+                  {tempReading?.value !== undefined && tempReading?.value !== null ? (
+                    <span>{tempReading.value} °C</span>
                   ) : (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-800 border border-rose-300">
-                      <span className="w-2 h-2 rounded-full bg-rose-500" /> 🔴 Offline
+                    <span className="text-xs font-semibold text-stone-400 bg-stone-200/60 px-2 py-0.5 rounded">
+                      Not Connected
                     </span>
                   )}
                 </div>
-                <span className="text-xs text-stone-500 font-mono">
-                  Node: {primaryDevice.device_id} · Mode: {primaryDevice.mode}
+              </div>
+
+              <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
+                <span className="text-[11px] font-bold text-stone-500 uppercase flex items-center gap-1">
+                  <Droplets className="w-3.5 h-3.5 text-sky-600" /> Humidity
                 </span>
+                <div className="text-xl font-extrabold text-stone-900 mt-1">
+                  {humReading?.value !== undefined && humReading?.value !== null ? (
+                    <span>{humReading.value} %</span>
+                  ) : (
+                    <span className="text-xs font-semibold text-stone-400 bg-stone-200/60 px-2 py-0.5 rounded">
+                      Not Connected
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
 
-            {/* Quick manual pump buttons and telemetry stream status */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold border ${
-                  wsConnected
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : 'bg-stone-100 text-stone-600 border-stone-200'
-                }`}
-                title={wsConnected ? 'WebSocket live streaming active' : 'Fallback to 5s polling'}
-              >
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    wsConnected ? 'bg-emerald-500 animate-ping' : 'bg-stone-400'
-                  }`}
-                />
-                {wsConnected ? 'Live WS' : 'Polling'}
-              </span>
-
-              {!primaryDevice.pump_status?.pump_on ? (
-                <button
-                  onClick={() => handlePumpCommand('PUMP_ON', 30)}
-                  disabled={pumpActionLoading || (primaryDevice.pump_status?.cooldown_remaining_seconds ?? 0) > 0 || primaryDevice.pump_status?.emergency_locked}
-                  className="px-3 py-1.5 bg-nature-700 hover:bg-nature-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5"
-                >
-                  <Power className="w-3.5 h-3.5" /> 💧 Turn Pump ON (30s)
-                </button>
-              ) : (
-                <button
-                  onClick={() => handlePumpCommand('PUMP_OFF')}
-                  disabled={pumpActionLoading}
-                  className="px-3 py-1.5 bg-stone-700 hover:bg-stone-800 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5"
-                >
-                  <Power className="w-3.5 h-3.5" /> Turn Pump OFF
-                </button>
-              )}
-              <button
-                onClick={() => handlePumpCommand('EMERGENCY_STOP')}
-                disabled={pumpActionLoading}
-                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5"
-              >
-                <ShieldAlert className="w-3.5 h-3.5" /> ⛔ STOP PUMP
-              </button>
-              <a
-                href={getReadingsExportUrl()}
-                download
-                className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-bold flex items-center gap-1"
-                title="Export sensor readings as CSV"
-              >
-                <Download className="w-3.5 h-3.5" /> CSV
-              </a>
-              <Link
-                to="/iot"
-                className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-bold"
-              >
-                Full Controls →
-              </Link>
-            </div>
-          </div>
-
-          {/* Real Sensor Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
-              <span className="text-[11px] font-bold text-stone-500 uppercase flex items-center gap-1">
-                <Thermometer className="w-3.5 h-3.5 text-orange-600" /> Temperature
-              </span>
-              <div className="text-xl font-extrabold text-stone-900 mt-1">
-                {primaryDevice.latest_sensors?.find(s => s.sensor_type === 'temperature')?.value ?? '--'} °C
+              <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
+                <span className="text-[11px] font-bold text-stone-500 uppercase flex items-center gap-1">
+                  <Gauge className="w-3.5 h-3.5 text-emerald-600" /> Soil Moisture
+                </span>
+                <div className="text-xl font-extrabold text-stone-900 mt-1">
+                  {soilMoisture !== undefined && soilMoisture !== null ? (
+                    <span>{soilMoisture} %</span>
+                  ) : (
+                    <span className="text-xs font-semibold text-stone-400 bg-stone-200/60 px-2 py-0.5 rounded">
+                      Not Connected
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
 
-            <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
-              <span className="text-[11px] font-bold text-stone-500 uppercase flex items-center gap-1">
-                <Droplets className="w-3.5 h-3.5 text-sky-600" /> Humidity
-              </span>
-              <div className="text-xl font-extrabold text-stone-900 mt-1">
-                {primaryDevice.latest_sensors?.find(s => s.sensor_type === 'humidity')?.value ?? '--'} %
+              <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
+                <span className="text-[11px] font-bold text-stone-500 uppercase flex items-center gap-1">
+                  <Droplets className="w-3.5 h-3.5 text-cyan-600" /> Water Tank
+                </span>
+                <div className="text-xl font-extrabold text-stone-900 mt-1">
+                  {waterReading?.value !== undefined && waterReading?.value !== null ? (
+                    <span>{waterReading.value} %</span>
+                  ) : (
+                    <span className="text-xs font-semibold text-stone-400 bg-stone-200/60 px-2 py-0.5 rounded">
+                      Not Connected
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
 
-            <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
-              <span className="text-[11px] font-bold text-stone-500 uppercase flex items-center gap-1">
-                <Gauge className="w-3.5 h-3.5 text-emerald-600" /> Soil Moisture
-              </span>
-              <div className="text-xl font-extrabold text-stone-900 mt-1">
-                {primaryDevice.latest_soil?.moisture_percent ?? '--'} %
-              </div>
-            </div>
-
-            <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
-              <span className="text-[11px] font-bold text-stone-500 uppercase flex items-center gap-1">
-                <Droplets className="w-3.5 h-3.5 text-cyan-600" /> Water Tank
-              </span>
-              <div className="text-xl font-extrabold text-stone-900 mt-1">
-                {primaryDevice.latest_sensors?.find(s => s.sensor_type === 'water_level')?.value ?? '--'} %
-              </div>
-            </div>
-
-            <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
-              <span className="text-[11px] font-bold text-stone-500 uppercase flex items-center gap-1">
-                <Power className="w-3.5 h-3.5 text-nature-600" /> Pump Status
-              </span>
-              <div className="text-xl font-extrabold text-stone-900 mt-1">
-                {primaryDevice.pump_status?.pump_on ? (
-                  <span className="text-emerald-600 animate-pulse">ON ({primaryDevice.pump_status.runtime_seconds}s)</span>
-                ) : (
-                  <span className="text-stone-500">OFF</span>
-                )}
+              <div className="p-3 bg-stone-50 rounded-xl border border-stone-200">
+                <span className="text-[11px] font-bold text-stone-500 uppercase flex items-center gap-1">
+                  <Power className="w-3.5 h-3.5 text-nature-600" /> Pump Status
+                </span>
+                <div className="text-xl font-extrabold text-stone-900 mt-1">
+                  {isEsp8266 ? (
+                    <span className="text-xs font-semibold text-stone-500">Disabled (Safety)</span>
+                  ) : activeDevice.pump_status?.pump_on ? (
+                    <span className="text-emerald-600 animate-pulse">ON ({activeDevice.pump_status.runtime_seconds}s)</span>
+                  ) : (
+                    <span className="text-stone-500">OFF</span>
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
+
 
       {/* Local Weather Forecast & Rain Guard Advisory */}
       {weather && (

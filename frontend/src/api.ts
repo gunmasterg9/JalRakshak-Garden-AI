@@ -189,6 +189,7 @@ export async function fetchDeviceStatus(deviceId: string): Promise<any> {
   return res.json();
 }
 
+
 export async function sendDeviceCommand(
   deviceId: string,
   command: string,
@@ -428,6 +429,12 @@ export async function updateWaterBudget(targetLiters: number): Promise<any> {
 export async function fetchMicroclimateMap(): Promise<import('./types').MicroclimateMap> {
   const res = await fetch(`${API_BASE}/api/iot/microclimate`);
   if (!res.ok) throw new Error('Failed to fetch microclimate map');
+  return res.json();
+}
+
+export async function fetchDeviceDiagnostics(deviceId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/iot/devices/${encodeURIComponent(deviceId)}/diagnostics`);
+  if (!res.ok) throw new Error('Failed to fetch device diagnostics');
   return res.json();
 }
 

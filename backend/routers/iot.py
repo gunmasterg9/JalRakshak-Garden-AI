@@ -34,16 +34,20 @@ router = APIRouter(prefix="/api/iot", tags=["IoT"])
 class TelemetryPayload(BaseModel):
     device_id: str = Field(..., min_length=1, max_length=64)
     timestamp: str = Field(..., description="ISO 8601 formatted timestamp")
-    temperature_c: float = Field(..., ge=-20.0, le=65.0, description="Temperature between -20C and 65C")
-    humidity_percent: float = Field(..., ge=0.0, le=100.0, description="Relative humidity 0-100%")
-    soil_moisture_percent: float = Field(..., ge=0.0, le=100.0, description="Calibrated soil moisture 0-100%")
-    water_level_percent: float = Field(..., ge=0.0, le=100.0, description="Reservoir level 0-100%")
+    temperature_c: Optional[float] = Field(None, ge=-20.0, le=65.0, description="Temperature between -20C and 65C")
+    humidity_percent: Optional[float] = Field(None, ge=0.0, le=100.0, description="Relative humidity 0-100%")
+    soil_moisture_percent: Optional[float] = Field(None, ge=0.0, le=100.0, description="Calibrated soil moisture 0-100%")
+    water_level_percent: Optional[float] = Field(None, ge=0.0, le=100.0, description="Reservoir level 0-100%")
     pump_on: bool = False
     raw_adc: Optional[int] = Field(None, ge=0, le=4095)
     plant_id: Optional[int] = None
     flow_rate_lpm: Optional[float] = Field(None, ge=0.0, le=50.0)
     measured_liters: Optional[float] = Field(None, ge=0.0)
     is_simulated: bool = False
+    firmware_version: Optional[str] = None
+    wifi_rssi: Optional[int] = None
+    ip_address: Optional[str] = None
+    sensor_status: Optional[dict[str, Any]] = None
 
 
 class DeviceRegisterPayload(BaseModel):
@@ -140,49 +144,78 @@ async def ingest_telemetry(payload: TelemetryPayload):
     with get_db() as conn:
         # Check or register device if unseen
         dev = conn.execute("SELECT * FROM devices WHERE device_id = ?", (device_id,)).fetchone()
+        detected_type = "esp8266" if "8266" in device_id.lower() else "esp32"
         if not dev:
             conn.execute(
                 """INSERT INTO devices
-                (device_id, name, device_type, status, mode, pump_state, last_seen, created_at, updated_at)
-                VALUES (?, ?, 'esp32', 'online', 'AI_RECOMMEND', ?, ?, ?, ?)""",
-                (device_id, f"ESP32 Node ({device_id})", int(payload.pump_on), payload.timestamp, now_iso, now_iso),
+                (device_id, name, device_type, ip_address, status, mode, pump_state, last_seen, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'online', 'AI_RECOMMEND', ?, ?, ?, ?)""",
+                (
+                    device_id,
+                    f"{detected_type.upper()} Node ({device_id})",
+                    detected_type,
+                    payload.ip_address or "",
+                    int(payload.pump_on),
+                    payload.timestamp,
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            dry_cal = 800 if detected_type == "esp8266" else 3200
+            wet_cal = 350 if detected_type == "esp8266" else 1400
+            conn.execute(
+                """INSERT OR IGNORE INTO device_calibrations (device_id, dry_value, wet_value, status, updated_at)
+                VALUES (?, ?, ?, 'uncalibrated', ?)""",
+                (device_id, dry_cal, wet_cal, now_iso),
             )
         else:
-            conn.execute(
-                """UPDATE devices SET status = 'online', pump_state = ?, last_seen = ?, updated_at = ?
-                WHERE device_id = ?""",
-                (int(payload.pump_on), payload.timestamp, now_iso, device_id),
-            )
+            if payload.ip_address:
+                conn.execute(
+                    """UPDATE devices SET status = 'online', pump_state = ?, last_seen = ?, ip_address = ?, updated_at = ?
+                    WHERE device_id = ?""",
+                    (int(payload.pump_on), payload.timestamp, payload.ip_address, now_iso, device_id),
+                )
+            else:
+                conn.execute(
+                    """UPDATE devices SET status = 'online', pump_state = ?, last_seen = ?, updated_at = ?
+                    WHERE device_id = ?""",
+                    (int(payload.pump_on), payload.timestamp, now_iso, device_id),
+                )
 
         sim_flag = 1 if payload.is_simulated else 0
 
-        # Store environmental readings
-        readings = [
-            (device_id, payload.timestamp, "temperature", payload.temperature_c, "°C", "good", sim_flag),
-            (device_id, payload.timestamp, "humidity", payload.humidity_percent, "%", "good", sim_flag),
-            (device_id, payload.timestamp, "water_level", payload.water_level_percent, "%", "good", sim_flag),
-        ]
+        # Store environmental readings only for connected sensors
+        readings = []
+        if payload.temperature_c is not None:
+            readings.append((device_id, payload.timestamp, "temperature", payload.temperature_c, "°C", "good", sim_flag))
+        if payload.humidity_percent is not None:
+            readings.append((device_id, payload.timestamp, "humidity", payload.humidity_percent, "%", "good", sim_flag))
+        if payload.water_level_percent is not None:
+            readings.append((device_id, payload.timestamp, "water_level", payload.water_level_percent, "%", "good", sim_flag))
         if payload.flow_rate_lpm is not None:
             readings.append((device_id, payload.timestamp, "flow_rate", payload.flow_rate_lpm, "L/min", "good", sim_flag))
 
-        conn.executemany(
-            """INSERT INTO sensor_readings
-            (device_id, timestamp, sensor_type, value, unit, quality, is_simulated)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            readings,
-        )
+        if readings:
+            conn.executemany(
+                """INSERT INTO sensor_readings
+                (device_id, timestamp, sensor_type, value, unit, quality, is_simulated)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                readings,
+            )
 
-        # Store soil reading
-        conn.execute(
-            """INSERT INTO soil_readings
-            (device_id, plant_id, timestamp, raw_adc, moisture_percent, is_simulated)
-            VALUES (?, ?, ?, ?, ?, ?)""",
-            (device_id, payload.plant_id, payload.timestamp, payload.raw_adc, payload.soil_moisture_percent, sim_flag),
-        )
+        # Store soil reading only if soil_moisture_percent or raw_adc is provided
+        if payload.soil_moisture_percent is not None or payload.raw_adc is not None:
+            effective_moisture = payload.soil_moisture_percent if payload.soil_moisture_percent is not None else 0.0
+            conn.execute(
+                """INSERT INTO soil_readings
+                (device_id, plant_id, timestamp, raw_adc, moisture_percent, is_simulated)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (device_id, payload.plant_id, payload.timestamp, payload.raw_adc, effective_moisture, sim_flag),
+            )
 
-        # Check water tank critical safety threshold
+        # Check water tank critical safety threshold only if reading provided
         should_stop_pump = False
-        if payload.water_level_percent <= config.MIN_WATER_LEVEL_PERCENT:
+        if payload.water_level_percent is not None and payload.water_level_percent <= config.MIN_WATER_LEVEL_PERCENT:
             conn.execute(
                 """INSERT INTO alerts (device_id, severity, alert_type, message, is_active, created_at)
                 VALUES (?, 'critical', 'tank_critical', ?, 1, ?)""",
@@ -201,8 +234,8 @@ async def ingest_telemetry(payload: TelemetryPayload):
             if payload.pump_on:
                 should_stop_pump = True
 
-        # Check soil critical dryness
-        if payload.soil_moisture_percent <= 20.0:
+        # Check soil critical dryness only if reading provided
+        if payload.soil_moisture_percent is not None and payload.soil_moisture_percent <= 20.0:
             conn.execute(
                 """INSERT INTO alerts (device_id, plant_id, severity, alert_type, message, is_active, created_at)
                 VALUES (?, ?, 'warning', 'soil_critical', ?, 1, ?)""",
@@ -239,9 +272,14 @@ async def ingest_telemetry(payload: TelemetryPayload):
         "humidity_percent": payload.humidity_percent,
         "soil_moisture_percent": payload.soil_moisture_percent,
         "water_level_percent": payload.water_level_percent,
+        "raw_adc": payload.raw_adc,
         "pump_on": payload.pump_on,
         "pump_status": pump_status,
         "is_simulated": payload.is_simulated,
+        "firmware_version": payload.firmware_version,
+        "wifi_rssi": payload.wifi_rssi,
+        "ip_address": payload.ip_address,
+        "sensor_status": payload.sensor_status,
     })
 
     return {
@@ -263,14 +301,43 @@ async def list_devices():
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM devices ORDER BY created_at DESC").fetchall()
 
-    devices = []
-    for r in rows:
-        d = dict(r)
-        current_status = _get_device_online_status(d.get("last_seen"))
-        pump_info = iot_safety.get_pump_status(d["device_id"])
-        d["live_status"] = current_status
-        d["pump_status"] = pump_info
-        devices.append(d)
+        devices = []
+        for r in rows:
+            d = dict(r)
+            dev_id = d["device_id"]
+            dev_type = (d.get("device_type") or "esp32").lower()
+            current_status = _get_device_online_status(d.get("last_seen"))
+            pump_info = iot_safety.get_pump_status(dev_id)
+            d["live_status"] = current_status
+            d["pump_status"] = pump_info
+
+            # Attach calibration
+            cal = conn.execute("SELECT * FROM device_calibrations WHERE device_id = ?", (dev_id,)).fetchone()
+            def_dry = 800 if dev_type == "esp8266" else 3200
+            def_wet = 350 if dev_type == "esp8266" else 1400
+            d["calibration"] = dict(cal) if cal else {"dry_value": def_dry, "wet_value": def_wet, "status": "uncalibrated"}
+
+            # Attach latest sensors
+            latest_sensors = conn.execute(
+                """SELECT sensor_type, value, unit, timestamp, is_simulated
+                FROM sensor_readings
+                WHERE device_id = ?
+                ORDER BY id DESC LIMIT 10""",
+                (dev_id,),
+            ).fetchall()
+            d["latest_sensors"] = [dict(s) for s in latest_sensors]
+
+            # Attach latest soil
+            latest_soil = conn.execute(
+                """SELECT moisture_percent, raw_adc, timestamp, is_simulated
+                FROM soil_readings
+                WHERE device_id = ?
+                ORDER BY id DESC LIMIT 1""",
+                (dev_id,),
+            ).fetchone()
+            d["latest_soil"] = dict(latest_soil) if latest_soil else None
+
+            devices.append(d)
 
     return devices
 
@@ -302,9 +369,12 @@ async def get_device(device_id: str):
         ).fetchone()
 
     res = dict(dev)
+    dev_type = (res.get("device_type") or "esp32").lower()
     res["live_status"] = _get_device_online_status(res.get("last_seen"))
     res["pump_status"] = iot_safety.get_pump_status(device_id)
-    res["calibration"] = dict(cal) if cal else {"dry_value": 3200, "wet_value": 1400, "status": "uncalibrated"}
+    def_dry = 800 if dev_type == "esp8266" else 3200
+    def_wet = 350 if dev_type == "esp8266" else 1400
+    res["calibration"] = dict(cal) if cal else {"dry_value": def_dry, "wet_value": def_wet, "status": "uncalibrated"}
     res["latest_sensors"] = [dict(s) for s in latest_sensors]
     res["latest_soil"] = dict(latest_soil) if latest_soil else None
     return res
@@ -312,8 +382,12 @@ async def get_device(device_id: str):
 
 @router.post("/devices/register")
 async def register_device(payload: DeviceRegisterPayload):
-    """Register or update an ESP32 or Arduino-gateway device."""
+    """Register or update an ESP32 or ESP8266 controller device."""
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    dev_type = (payload.device_type or "esp32").lower().strip()
+    def_dry = 800 if dev_type == "esp8266" else 3200
+    def_wet = 350 if dev_type == "esp8266" else 1400
+
     with get_db() as conn:
         conn.execute(
             """INSERT INTO devices (device_id, name, device_type, ip_address, mode, status, created_at, updated_at)
@@ -324,15 +398,15 @@ async def register_device(payload: DeviceRegisterPayload):
                 ip_address = excluded.ip_address,
                 mode = excluded.mode,
                 updated_at = excluded.updated_at""",
-            (payload.device_id, payload.name, payload.device_type, payload.ip_address or "", payload.mode, now_iso, now_iso),
+            (payload.device_id, payload.name, dev_type, payload.ip_address or "", payload.mode, now_iso, now_iso),
         )
         conn.execute(
             """INSERT OR IGNORE INTO device_calibrations (device_id, dry_value, wet_value, status, updated_at)
-            VALUES (?, 3200, 1400, 'uncalibrated', ?)""",
-            (payload.device_id, now_iso),
+            VALUES (?, ?, ?, 'uncalibrated', ?)""",
+            (payload.device_id, def_dry, def_wet, now_iso),
         )
 
-    return {"status": "registered", "device_id": payload.device_id}
+    return {"status": "registered", "device_id": payload.device_id, "device_type": dev_type}
 
 
 @router.get("/devices/{device_id}/status")
@@ -363,12 +437,117 @@ async def get_device_status(device_id: str):
     return {
         "device_id": device_id,
         "name": dev["name"],
+        "device_type": dev.get("device_type", "esp32"),
         "connection_state": live_status,  # "online" | "delayed" | "offline"
         "last_seen_timestamp": last_seen,
         "last_seen_seconds_ago": last_seen_seconds_ago,
         "pump_status": iot_safety.get_pump_status(device_id),
         "recent_readings": [dict(r) for r in latest],
     }
+
+
+@router.get("/devices/{device_id}/diagnostics")
+async def get_device_diagnostics(device_id: str):
+    """Detailed hardware diagnostics for NodeMCU ESP8266 and ESP32 controller nodes."""
+    with get_db() as conn:
+        dev = conn.execute("SELECT * FROM devices WHERE device_id = ?", (device_id,)).fetchone()
+        if not dev:
+            raise HTTPException(status_code=404, detail="Device not found.")
+
+        cal = conn.execute("SELECT * FROM device_calibrations WHERE device_id = ?", (device_id,)).fetchone()
+
+        latest_readings = conn.execute(
+            """SELECT sensor_type, value, unit, timestamp, quality, is_simulated
+            FROM sensor_readings
+            WHERE device_id = ?
+            ORDER BY id DESC LIMIT 20""",
+            (device_id,),
+        ).fetchall()
+
+        latest_soil = conn.execute(
+            """SELECT moisture_percent, raw_adc, timestamp, is_simulated
+            FROM soil_readings
+            WHERE device_id = ?
+            ORDER BY id DESC LIMIT 1""",
+            (device_id,),
+        ).fetchone()
+
+    dev_dict = dict(dev)
+    dev_type = (dev_dict.get("device_type") or "esp32").lower()
+    last_seen = dev_dict.get("last_seen")
+    live_status = _get_device_online_status(last_seen)
+
+    last_seen_seconds_ago = None
+    if last_seen:
+        try:
+            last_dt = datetime.datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
+            last_seen_seconds_ago = int((datetime.datetime.now(datetime.timezone.utc) - last_dt).total_seconds())
+        except Exception:
+            pass
+
+    has_temp = any(r["sensor_type"] == "temperature" for r in latest_readings)
+    has_humidity = any(r["sensor_type"] == "humidity" for r in latest_readings)
+    has_soil = latest_soil is not None
+    has_water = any(r["sensor_type"] == "water_level" for r in latest_readings)
+
+    dht11_healthy = has_temp and has_humidity and (live_status != "offline")
+    adc_bits = 10 if dev_type == "esp8266" else 12
+    adc_max = 1023 if dev_type == "esp8266" else 4095
+    adc_voltage_limit = "3.3V (NodeMCU onboard 220k/100k divider; raw chip pin limit is 1.0V)" if dev_type == "esp8266" else "3.3V (11dB attenuation)"
+
+    def_dry = 800 if dev_type == "esp8266" else 3200
+    def_wet = 350 if dev_type == "esp8266" else 1400
+
+    return {
+        "device_id": device_id,
+        "name": dev_dict.get("name"),
+        "device_type": dev_type.upper(),
+        "ip_address": dev_dict.get("ip_address") or "DHCP / Offline",
+        "live_status": live_status,
+        "last_seen": last_seen,
+        "last_seen_seconds_ago": last_seen_seconds_ago,
+        "heartbeat_timeout_seconds": config.DEVICE_HEARTBEAT_TIMEOUT_SECONDS,
+        "delayed_timeout_seconds": config.DEVICE_DELAYED_TIMEOUT_SECONDS,
+        "adc_specs": {
+            "resolution_bits": adc_bits,
+            "max_raw_value": adc_max,
+            "voltage_limit": adc_voltage_limit,
+            "calibration_profile": dict(cal) if cal else {
+                "dry_value": def_dry,
+                "wet_value": def_wet,
+                "status": "uncalibrated",
+            },
+        },
+        "sensor_health": {
+            "dht11": {
+                "status": "connected" if dht11_healthy else ("degraded" if has_temp or has_humidity else "not_connected"),
+                "label": "DHT11 Temp/Humidity",
+                "last_temperature": next((r["value"] for r in latest_readings if r["sensor_type"] == "temperature"), None),
+                "last_humidity": next((r["value"] for r in latest_readings if r["sensor_type"] == "humidity"), None),
+            },
+            "soil_moisture": {
+                "status": "connected" if (has_soil and live_status != "offline") else "not_connected",
+                "label": "LM393 / Capacitive Soil Probe",
+                "moisture_percent": latest_soil["moisture_percent"] if latest_soil else None,
+                "raw_adc": latest_soil["raw_adc"] if latest_soil else None,
+            },
+            "water_tank": {
+                "status": "connected" if (has_water and live_status != "offline") else "not_connected",
+                "label": "Reservoir Level Sensor",
+                "water_level_percent": next((r["value"] for r in latest_readings if r["sensor_type"] == "water_level"), None),
+            },
+            "pump_actuator": {
+                "status": "disabled_safety_pending" if dev_type == "esp8266" else ("active" if dev_dict.get("pump_state") else "ready"),
+                "reason": "Hardware verification pending for ESP8266" if dev_type == "esp8266" else "Operational",
+            },
+        },
+        "backend_connectivity": {
+            "fastapi_status": "operational",
+            "websocket_active": True,
+            "rules_engine_status": "operational",
+        },
+    }
+
 
 
 # ---------------------------------------------------------------------------
@@ -506,14 +685,19 @@ async def calibrate_soil_sensor(device_id: str, payload: CalibratePayload):
     """Set or capture soil moisture calibration values (DRY_VALUE, WET_VALUE)."""
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     with get_db() as conn:
+        dev_row = conn.execute("SELECT device_type FROM devices WHERE device_id = ?", (device_id,)).fetchone()
+        dev_type = (dev_row["device_type"] if dev_row else "").lower()
+        def_dry = 800 if dev_type == "esp8266" else 3200
+        def_wet = 350 if dev_type == "esp8266" else 1400
+
         existing = conn.execute("SELECT * FROM device_calibrations WHERE device_id = ?", (device_id,)).fetchone()
-        dry_val = existing["dry_value"] if existing else 3200
-        wet_val = existing["wet_value"] if existing else 1400
+        dry_val = existing["dry_value"] if existing else def_dry
+        wet_val = existing["wet_value"] if existing else def_wet
 
         if payload.step == "dry":
-            dry_val = payload.raw_reading if payload.raw_reading is not None else 3200
+            dry_val = payload.raw_reading if payload.raw_reading is not None else def_dry
         elif payload.step == "wet":
-            wet_val = payload.raw_reading if payload.raw_reading is not None else 1400
+            wet_val = payload.raw_reading if payload.raw_reading is not None else def_wet
 
         if payload.dry_value is not None:
             dry_val = payload.dry_value
